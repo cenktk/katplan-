@@ -614,7 +614,7 @@ function renderAll() {
 }
 function sync3d() { try { if (window.View3D && window.View3D.sync) window.View3D.sync(); } catch (e) { console.error(e); } }
 function renderHeader() {
-  $('#brandSub').textContent = tr('Net kullanım alanı ≈ ' + fmt(netArea(), 2) + ' m² · Birim: mm · Özgün plan ölçeği 1:60', 'Net floor area ≈ ' + fmt(netArea(), 2) + ' m² · Units: mm · Original scale 1:60');
+  $('#brandSub').textContent = tr('Net alan ≈ ' + fmt(netArea(), 2) + ' m² · Birim mm · Plan ölçeği 1:60', 'Net floor area ≈ ' + fmt(netArea(), 2) + ' m² · Units: mm · Original scale 1:60');
   var u = $('#undo'), r = $('#redo');
   u.disabled = !undoStack.length; u.style.opacity = undoStack.length ? '' : '.4';
   r.disabled = !redoStack.length; r.style.opacity = redoStack.length ? '' : '.4';

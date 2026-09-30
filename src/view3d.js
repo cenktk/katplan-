@@ -305,6 +305,7 @@ function applyLight() {
   ground.material.color.set(night ? 0x2a2e38 : 0xf2eee7);
   renderer.toneMappingExposure = night ? 1.25 : 1.05;
   applyLamps();
+  if (window.Models3D && window.Models3D.setEnvironment) window.Models3D.setEnvironment(envTex, night ? 0.15 : 1);
   envMats.forEach(m => { m.envMapIntensity = (m.userData._envBase || 0.5) * (night ? 0.15 : 1); });
   const sv = $('#sunVal'); if (sv) sv.textContent = fmtHour(opt.hour);
 }
@@ -348,13 +349,11 @@ function buildArch() {
   const dem = new Set(st.demolished || []);
   const cut = opt.cut, CH = gH();
   const wm = wallMats();
-  const glass = mat('#cfe6ef', {});
   const glassMat = new THREE.MeshPhysicalMaterial({ color: 0xcfe6ef, roughness: 0.05, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide });
   const frameMat = mat('#5d6166', { roughness: 0.5, metalness: 0.4 });
   const sillMat = mat('#d8d0c0', { roughness: 0.3 });
   const edgeMat = new THREE.LineBasicMaterial({ color: 0x6f675b });
   const baseMat = mat('#8b7f6e', { roughness: 0.6 });
-  void glass;
 
   // ---- duvarlar
   gWalls().forEach((w, i) => {
@@ -523,20 +522,12 @@ function buildFurn() {
   gState().furniture.forEach(f => {
     let g = null;
     if (M3 && typeof M3.buildFurniture === 'function') {
-      try { g = M3.buildFurniture(f, { cut: opt.cut, night: opt.night }); } catch (e) { console.error('buildFurniture', f.type, e); }
+      try { g = M3.buildFurniture(f, { cut: opt.cut, night: opt.night, envMap: envTex, envK: opt.night ? 0.15 : 1 }); } catch (e) { console.error('buildFurniture', f.type, e); }
     }
     if (!g) g = placeholder(f);
     g.position.set(X(f.cx), 0, Z(f.cy));
     g.rotation.y = -f.rot * Math.PI / 180;
     g.userData.fid = f.id;
-    g.traverse(o => {
-      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(mm => {
-        if ((mm.isMeshStandardMaterial || mm.isMeshPhysicalMaterial) && !mm.userData._envDone) {
-          mm.userData._envDone = true;
-          if (needsEnv(mm)) { if (!mm.envMap) mm.envMap = envTex; mm.userData._envBase = envBase(mm); mm.envMapIntensity = mm.userData._envBase * (opt.night ? 0.15 : 1); envMats.add(mm); }
-        }
-      });
-    });
     furnG.add(g);
     furnMap.set(f.id, g);
   });
@@ -628,12 +619,46 @@ function planPose() {
   const dist = visH / 2 / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
   return { target: new THREE.Vector3(tx, 0, tz), pos: new THREE.Vector3(tx, dist, tz + 0.0001), dist };
 }
-function isoFrom(pp) {
-  const d = clamp(pp.dist, 5, 30);
-  return { target: pp.target.clone(), pos: pp.target.clone().add(new THREE.Vector3(0.3, 0.82, 0.49).normalize().multiplyScalar(d)) };
+/* Plan sınır kutusu (m): duvarların kapsadığı alan; hazır pozların uzaklığı buna göre ayarlanır,
+ * böylece plan büyüklüğünden bağımsız aynı kompozisyon (tüm daire kadrajda, etrafında boşluk) elde edilir. */
+function planBounds() {
+  let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
+  gWalls().forEach(w => { x0 = Math.min(x0, w[0]); z0 = Math.min(z0, w[1]); x1 = Math.max(x1, w[2]); z1 = Math.max(z1, w[3]); });
+  if (x0 > x1) { x0 = -6000 + gOX(); x1 = 6000 + gOX(); z0 = -5000 + gOY(); z1 = 5000 + gOY(); }
+  return { x0: X(x0), x1: X(x1), z0: Z(z0), z1: Z(z1) };
 }
-const isoWhole = () => ({ target: new THREE.Vector3(0, 0, 0), pos: new THREE.Vector3(5.5, 15.5, 10) });
-const topWhole = () => ({ target: new THREE.Vector3(0, 0, 0), pos: new THREE.Vector3(0, 19, 0.0001) });
+/** hedeften dir yönünde bakan kameranın, plan kutusunu ±margin NDC içinde tutan en küçük uzaklığı */
+function fitDist(target, dir, margin) {
+  const b = planBounds(), CH = gH();
+  const pts = [];
+  [b.x0, b.x1].forEach(x => [b.z0, b.z1].forEach(z => [0, CH].forEach(y => pts.push(new THREE.Vector3(x, y, z)))));
+  const f = dir.clone().normalize().negate();
+  const upv = Math.abs(f.y) > 0.999 ? new THREE.Vector3(0, 0, -1) : new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(f, upv).normalize();
+  const up2 = new THREE.Vector3().crossVectors(right, f).normalize();
+  const th = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)), asp = camera.aspect;
+  const ok = d => {
+    const P = target.clone().addScaledVector(dir.clone().normalize(), d);
+    for (const c of pts) {
+      const v = c.clone().sub(P);
+      const zz = v.dot(f);
+      if (zz < 0.2) return false;
+      if (Math.abs(v.dot(right) / zz) / (th * asp) > margin || Math.abs(v.dot(up2) / zz) / th > margin) return false;
+    }
+    return true;
+  };
+  let lo = 4, hi = 90;
+  if (ok(lo)) return lo;
+  for (let i = 0; i < 28; i++) { const m = (lo + hi) / 2; if (ok(m)) hi = m; else lo = m; }
+  return hi;
+}
+const ISO_DIR = new THREE.Vector3(0.3, 0.82, 0.49).normalize();
+function isoFrom(pp) {
+  const d = fitDist(pp.target, ISO_DIR, 0.9);
+  return { target: pp.target.clone(), pos: pp.target.clone().addScaledVector(ISO_DIR, d) };
+}
+const isoWhole = () => { const t = new THREE.Vector3(0, 0, 0); return { target: t, pos: t.clone().addScaledVector(ISO_DIR, fitDist(t, ISO_DIR, 0.9)) }; };
+const topWhole = () => { const t = new THREE.Vector3(0, 0, 0), D = new THREE.Vector3(0, 1, 0.000005); return { target: t, pos: t.clone().addScaledVector(D, fitDist(t, D, 0.86)) }; };
 
 function slerpPose(a, b, t) {
   // hedefe göre küresel interpolasyon: yarıçap ve phi doğrusal, theta en kısa yoldan
@@ -1305,10 +1330,13 @@ const API = {
   get camera() { return camera; },
   init,
   // sınama yardımcısı: kamerayı 2D ile aynı üstten pozuna koyar
+  _blocked: (x, z) => blocked(x, z),
+  _doors: () => doors.map(d => ({ open: d.isOpen, cur: d.cur, entry: d.entry })),
   _toPlanPose() { controls.enabled = false; setPose(planPose()); },
 };
 window.View3D = API;
 
+window.addEventListener('kp-lang', () => API.refresh());
 bindHeader();
 syncChips();
 window.dispatchEvent(new Event('view3d-ready'));

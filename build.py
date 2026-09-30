@@ -37,3 +37,10 @@ html = f"""<!doctype html>
 """
 (R / "index.html").write_text(html, encoding="utf-8")
 print(f"index.html: {len(html)//1024} KB")
+
+# Artifact sürümü: yayın sırasında iskelet (doctype/head/body) eklendiği için yalnızca içerik
+body = html.split("<body>\n", 1)[1].rsplit("</body>", 1)[0]
+head = html.split("<head>\n", 1)[1].split("</head>", 1)[0]
+head = head.replace('<meta charset="utf-8">\n', "").replace('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n', "")
+(R / "temp").mkdir(exist_ok=True)
+(R / "temp" / "kat-plani-artifact.html").write_text(head + body, encoding="utf-8")

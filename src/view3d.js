@@ -1304,6 +1304,11 @@ const API = {
   setMode, setCut, setNight, setFurn, setLabels, setHour,
   flyToRoom, flyToAll, flyIso() { return flyTo(isoWhole()); }, flyTop() { return flyTo(topWhole()); },
   groundPointAt, screenCenterGround, pxPerMm,
+  // 2D tarafının (app.js) kullandığı adlar
+  centerGround: screenCenterGround,
+  dropPoint: groundPointAt,
+  dropInfo(x, y) { const s = pxPerMm(x, y); return s ? { scale: s } : null; },
+  onSelect() { /* seçim vurgusu her karede ui.sel'den okunur */ },
   toDataURL, exportPNG,
   walking: () => active && mode === 'walk',
   isWalking: () => active && mode === 'walk',

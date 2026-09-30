@@ -81,7 +81,7 @@ const screenMat = glow => mat('#0b0e13', { roughness: 0.1, metalness: 0.3, emiss
 const glowMat = () => mat('#fff4dc', { emissive: '#ffdca0', emissiveIntensity: 0.5, side: DS, roughness: 0.6 });
 const glassM = () => mat('#cfe6ef', { roughness: 0.05, transparent: true, opacity: 0.28, depthWrite: false, side: DS });
 const frameMat = () => mat('#5d6166', { roughness: 0.5, metalness: 0.4 });
-const steel = () => mat('#c9ced3', { metalness: 0.85, roughness: 0.3 });
+const steel = () => mat('#d3d8dc', { metalness: 0.85, roughness: 0.3 });
 const led = (c, i = 1) => mat(c, { emissive: c, emissiveIntensity: i, roughness: 0.4 });
 
 /* ---------- tohumlu rastgelelik ---------- */

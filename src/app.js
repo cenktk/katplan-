@@ -649,3 +649,495 @@ function setTool(t) {
   mh.classList.toggle('show', t !== 'select');
   renderMeasure();
 }
+
+/* ===================== 2D işaretçi etkileşimi ===================== */
+var act = null, pointers = {}, pinch = null;
+function thr() { return IS_TOUCH ? 9 : 4; }
+function pcount() { return Object.keys(pointers).length; }
+function hoverInfo(e) {
+  var p = toMM(e.clientX, e.clientY);
+  $('#cx').textContent = Math.round(p.x) + ' mm'; $('#cy').textContent = Math.round(p.y) + ' mm';
+  var hr = $('#hoverRoom');
+  if (!act) {
+    var r = roomAt(p.x, p.y);
+    hr.innerHTML = r ? '<b>' + esc(roomName(r.id)) + '</b> ' + fmt(polyArea(r.poly), 2) + ' m²' : '';
+  } else hr.innerHTML = '';
+}
+function startPinch() {
+  var ids = Object.keys(pointers); if (ids.length < 2) return;
+  var a = pointers[ids[0]], b = pointers[ids[1]];
+  var r = svg.getBoundingClientRect(), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: view.s, wx: view.x0 + (mx - r.left) / view.s, wy: view.y0 + (my - r.top) / view.s };
+  cancelAct();
+}
+function cancelAct() {
+  if (act) { if (act.type === 'move' || act.type === 'rot' || act.type === 'size') { if (act.moved) commit(); else pendingSnap = null; } }
+  act = null; ui.mpend = null; ui.mcur = null; svg.classList.remove('panning'); renderMeasure();
+}
+function onDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  closeDrawers(); closeMenu();
+  if (e.pointerType === 'touch') {
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (pcount() === 2) { startPinch(); try { svg.setPointerCapture(e.pointerId); } catch (x) { } return; }
+    if (pcount() > 2) return;
+  }
+  try { svg.setPointerCapture(e.pointerId); } catch (x) { }
+  var P = toMM(e.clientX, e.clientY), tg = e.target;
+  if (ui.tool === 'measure') {
+    var pt = snapPoint(P.x, P.y, ui.mpend, e.shiftKey);
+    if (ui.mpend) {
+      var a = ui.mpend;
+      if (Math.hypot(pt.x - a.x, pt.y - a.y) > 20) mutate(function () { state.measures.push({ a: { x: a.x, y: a.y }, b: { x: pt.x, y: pt.y } }); });
+      ui.mpend = null; ui.mcur = null; act = { type: 'none' }; renderMeasure();
+    } else {
+      ui.mpend = pt; ui.mcur = pt; act = { type: 'measure', sx: e.clientX, sy: e.clientY, moved: false, pid: e.pointerId };
+      renderMeasure();
+    }
+    return;
+  }
+  var h = tg.closest && tg.closest('[data-handle]');
+  if (h && ui.sel && ui.sel.kind === 'furn') {
+    var f = getF(ui.sel.id);
+    if (f) {
+      snap();
+      act = { type: h.dataset.handle === 'rot' ? 'rot' : 'size', id: f.id, moved: false, sx: e.clientX, sy: e.clientY, w0: f.w, d0: f.d, cx0: f.cx, cy0: f.cy, rot0: f.rot };
+      return;
+    }
+  }
+  if (ui.tool === 'demolish') {
+    var wl = tg.closest && tg.closest('.wall');
+    if (wl) { toggleDemolish(+wl.dataset.wall); act = { type: 'none' }; return; }
+  }
+  if (ui.tool === 'select') {
+    var fg = tg.closest && tg.closest('g.furn');
+    if (fg) {
+      var ff = getF(fg.dataset.id);
+      if (ff) {
+        if (!ui.sel || ui.sel.kind !== 'furn' || ui.sel.id !== ff.id) select('furn', ff.id);
+        snap();
+        act = { type: 'move', id: ff.id, moved: false, sx: e.clientX, sy: e.clientY, ox: P.x - ff.cx, oy: P.y - ff.cy };
+        return;
+      }
+    }
+  }
+  var rm = tg.closest && tg.closest('[data-room]');
+  act = { type: 'pan', sx: e.clientX, sy: e.clientY, x0: view.x0, y0: view.y0, moved: false, room: rm ? rm.dataset.room : null };
+}
+function onMove(e) {
+  if (e.pointerType === 'touch' && pointers[e.pointerId]) {
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (pinch && pcount() >= 2) {
+      var ids = Object.keys(pointers), a = pointers[ids[0]], b = pointers[ids[1]], r = svg.getBoundingClientRect();
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, ns = clamp(pinch.s0 * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0), 0.012, 2);
+      view.s = ns; view.x0 = pinch.wx - (mx - r.left) / ns; view.y0 = pinch.wy - (my - r.top) / ns;
+      applyView(); return;
+    }
+  }
+  hoverInfo(e);
+  if (!act) return;
+  var P = toMM(e.clientX, e.clientY);
+  if (act.type === 'measure') {
+    if (!act.moved && Math.hypot(e.clientX - act.sx, e.clientY - act.sy) > thr()) act.moved = true;
+    ui.mcur = snapPoint(P.x, P.y, ui.mpend, e.shiftKey); renderMeasure(); return;
+  }
+  if (act.type === 'none') { if (ui.tool === 'measure' && ui.mpend) { ui.mcur = snapPoint(P.x, P.y, ui.mpend, e.shiftKey); renderMeasure(); } return; }
+  if (!act.moved && Math.hypot(e.clientX - act.sx, e.clientY - act.sy) <= thr()) return;
+  act.moved = true;
+  if (act.type === 'pan') {
+    svg.classList.add('panning');
+    view.x0 = act.x0 - (e.clientX - act.sx) / view.s; view.y0 = act.y0 - (e.clientY - act.sy) / view.s;
+    applyView(); return;
+  }
+  var f = getF(act.id); if (!f) return;
+  if (act.type === 'move') {
+    var q = snapMove(f, P.x - act.ox, P.y - act.oy); f.cx = q.x; f.cy = q.y;
+  } else if (act.type === 'rot') {
+    var ang = Math.atan2(P.y - f.cy, P.x - f.cx) * 180 / Math.PI + 90;
+    f.rot = e.shiftKey ? norm(ang) : norm(Math.round(ang / 15) * 15);
+  } else if (act.type === 'size') {
+    var rad = act.rot0 * Math.PI / 180, dx = P.x - act.cx0, dy = P.y - act.cy0;
+    var lx = dx * Math.cos(rad) + dy * Math.sin(rad), ly = -dx * Math.sin(rad) + dy * Math.cos(rad);
+    var nw = Math.max(100, Math.round((lx + act.w0 / 2) / 10) * 10), nd = Math.max(100, Math.round((ly + act.d0 / 2) / 10) * 10);
+    var ncx = -act.w0 / 2 + nw / 2, ncy = -act.d0 / 2 + nd / 2;
+    f.w = nw; f.d = nd;
+    f.cx = Math.round(act.cx0 + ncx * Math.cos(rad) - ncy * Math.sin(rad)); f.cy = Math.round(act.cy0 + ncx * Math.sin(rad) + ncy * Math.cos(rad));
+  }
+  renderFurn(); renderSel();
+  if (ui.is3d) sync3d();
+}
+function onUp(e) {
+  if (e.pointerType === 'touch') {
+    delete pointers[e.pointerId];
+    if (pinch) { if (pcount() < 2) pinch = null; if (pcount() === 0) act = null; return; }
+  }
+  svg.classList.remove('panning');
+  var a = act; act = null;
+  if (!a) return;
+  if (a.type === 'measure') {
+    if (a.moved && ui.mpend) {
+      var P = toMM(e.clientX, e.clientY), pt = snapPoint(P.x, P.y, ui.mpend, e.shiftKey), s0 = ui.mpend;
+      if (Math.hypot(pt.x - s0.x, pt.y - s0.y) > 20) mutate(function () { state.measures.push({ a: { x: s0.x, y: s0.y }, b: { x: pt.x, y: pt.y } }); });
+      ui.mpend = null; ui.mcur = null; renderMeasure();
+    }
+    return;
+  }
+  if (a.type === 'move' || a.type === 'rot' || a.type === 'size') {
+    if (a.moved) commit(); else pendingSnap = null;
+    return;
+  }
+  if (a.type === 'pan' && !a.moved && ui.tool === 'select') {
+    if (a.room) select('room', a.room); else select(null);
+  }
+}
+function toggleDemolish(i) {
+  var w = _WALLS[i]; if (!w) return;
+  if (w[4] === 'b') { toast(tr('Taşıyıcı duvar (siyah) yıkılamaz', 'Load-bearing walls (black) cannot be removed')); return; }
+  if (w[4] === 'e') { toast(tr('Dış duvarlar binanın dış kabuğudur, yıkılması önerilmez', 'Exterior walls are part of the building envelope and should not be removed')); return; }
+  var key = 'w' + i, was = state.demolished.indexOf(key) >= 0;
+  mutate(function () {
+    if (was) state.demolished.splice(state.demolished.indexOf(key), 1); else state.demolished.push(key);
+  });
+  if (was) toast(tr('Duvar geri getirildi', 'Wall restored'));
+  else toast(tr(Math.round(Math.max(w[2] - w[0], w[3] - w[1])) + ' mm duvar yıkım için işaretlendi', 'Marked ' + Math.round(Math.max(w[2] - w[0], w[3] - w[1])) + ' mm of wall for removal'));
+}
+function initPointer() {
+  svg.addEventListener('pointerdown', onDown);
+  svg.addEventListener('pointermove', onMove);
+  svg.addEventListener('pointerup', onUp);
+  svg.addEventListener('pointercancel', function (e) { if (e.pointerType === 'touch') delete pointers[e.pointerId]; if (pcount() < 2) pinch = null; cancelAct(); });
+  svg.addEventListener('pointerleave', function () { if (!act) { $('#cx').textContent = '—'; $('#cy').textContent = '—'; $('#hoverRoom').innerHTML = ''; } });
+  svg.addEventListener('contextmenu', function (e) { if (ui.tool === 'measure') { e.preventDefault(); ui.mpend = null; ui.mcur = null; act = null; renderMeasure(); } });
+  svg.addEventListener('dblclick', function (e) {
+    if (ui.tool !== 'select') return;
+    var fg = e.target.closest && e.target.closest('g.furn'); if (!fg) return;
+    var f = getF(fg.dataset.id); if (!f) return;
+    mutate(function () { f.rot = norm(f.rot + 90); });
+  });
+  svg.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var k = e.ctrlKey ? 0.01 : 0.0015;
+    zoomTo(view.s * Math.exp(-e.deltaY * k), e.clientX, e.clientY);
+  }, { passive: false });
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) { document.addEventListener(n, function (e) { e.preventDefault(); }, { passive: false }); });
+  document.addEventListener('pointerdown', function (e) { var m = $('#fileMenu'); if (m.open && !m.contains(e.target)) m.open = false; });
+}
+function closeMenu() { var m = $('#fileMenu'); if (m) m.open = false; }
+
+/* ===================== mobilya ekleme / silme ===================== */
+function addFurn(it, x, y) {
+  var f = { id: newId(), type: it.type, name: it.name, cx: Math.round(x / 10) * 10, cy: Math.round(y / 10) * 10, w: it.w, d: it.d, rot: 0, color: it.color };
+  pushOut(f);
+  snap();
+  if (it.type === 'rug') state.furniture.unshift(f); else state.furniture.push(f);
+  ui.sel = { kind: 'furn', id: f.id };
+  commit();
+  toast(tr('«' + it.name + '» eklendi ' + it.w + '×' + it.d, 'Added "' + nm(it.name) + '" ' + it.w + '×' + it.d));
+  return f;
+}
+function defaultAddPoint() {
+  if (ui.sel && ui.sel.kind === 'room') { var r = roomById(ui.sel.id); if (r) { var b = polyBox(r.poly); return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }; } }
+  if (ui.is3d && window.View3D && window.View3D.centerGround) { try { var g = window.View3D.centerGround(); if (g) return g; } catch (e) { } }
+  var v = viewSize(); return { x: view.x0 + v.W / view.s / 2, y: view.y0 + v.H / view.s / 2 };
+}
+function dupSel() {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var f = getF(ui.sel.id); if (!f) return;
+  snap();
+  var c = JSON.parse(JSON.stringify(f)); c.id = newId(); c.cx += 200; c.cy += 200;
+  state.furniture.push(c); ui.sel = { kind: 'furn', id: c.id }; commit();
+}
+function delSel() {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var id = ui.sel.id;
+  snap(); state.furniture = state.furniture.filter(function (f) { return f.id !== id; }); ui.sel = null; commit();
+}
+function rotSel(deg) {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var f = getF(ui.sel.id); if (!f) return;
+  mutate(function () { f.rot = norm(f.rot + deg); });
+}
+function clearAllFurn() {
+  var n = state.furniture.length;
+  if (!n) { toast(tr('Temizlenecek mobilya yok', 'There is no furniture to clear')); return; }
+  var msg = tr(n + ' mobilya / cihazın tamamı kaldırılsın mı?\nDuvarlar, zemin malzemeleri ve ölçüler korunur. «Geri Al» ile geri getirebilirsiniz.',
+    'Remove all ' + n + ' furniture / appliance items?\nWalls, flooring and measurements are kept. You can Undo this.');
+  if (!confirm(msg)) return;
+  mutate(function () { state.furniture = []; ui.sel = null; });
+  toast(tr('Yerleşim temizlendi — geri almak için «Geri Al»', 'Layout cleared — Undo to restore'));
+}
+function reorderSel(top) {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var f = getF(ui.sel.id); if (!f) return;
+  mutate(function () { state.furniture = state.furniture.filter(function (x) { return x !== f; }); if (top) state.furniture.push(f); else state.furniture.unshift(f); });
+}
+
+/* ===================== sağ panel ===================== */
+function statBox(label, val, unit) { return '<div><small>' + esc(label) + '</small><div class="big">' + val + (unit ? '<i>' + unit + '</i>' : '') + '</div></div>'; }
+function matCostTable() {
+  var order = [], acc = {};
+  _ROOMS.forEach(function (r) {
+    var k = roomMatKey(r.id);
+    if (!acc[k]) { acc[k] = 0; order.push(k); }
+    acc[k] += polyArea(r.poly);
+  });
+  return order.map(function (k) { var m = matOf(k); return { k: k, m: m, area: acc[k], cost: acc[k] * (m.price || 0) * 1.05 }; });
+}
+function demolishedMeters() {
+  var t = 0;
+  state.demolished.forEach(function (key) { var w = _WALLS[+key.slice(1)]; if (w) t += Math.max(w[2] - w[0], w[3] - w[1]); });
+  return t / 1000;
+}
+function kbdRows(rows) { return '<div class="kbdg">' + rows.map(function (r) { return '<kbd>' + esc(r[0]) + '</kbd><span>' + esc(r[1]) + '</span>'; }).join('') + '</div>'; }
+function renderOverview() {
+  var s = '<section><h3>' + esc(tr('Oda Alanları', 'Room Areas')) + '<small>' + esc(tr('Zemini görmek / değiştirmek için tıkla', 'Click to view / change flooring')) + '</small></h3><table>';
+  _ROOMS.forEach(function (r) {
+    var m = matOf(roomMatKey(r.id));
+    s += '<tr data-room="' + esc(r.id) + '"><td><span class="sw" style="background:' + esc(m.sw) + '"></span>' + esc(nm(roomName(r.id))) + (r.counted === false ? ' <em>*</em>' : '') + '</td><td class="r">' + fmt(polyArea(r.poly), 2) + ' m²</td></tr>';
+  });
+  s += '</table><div class="total"><span>' + esc(tr('Net kullanım alanı', 'Net floor area')) + '</span><b>' + fmt(netArea(), 2) + ' m²</b></div>';
+  s += '<div class="note">' + esc(tr('* Cumbalar net alana dahil değildir; alanlar duvar iç net ölçülerinden hesaplanır', '* Bay windows are excluded; areas use net inner wall dimensions')) + '</div></section>';
+  var rows = matCostTable(), tot = 0;
+  s += '<section><h3>' + esc(tr('Zemin Malzemesi Tahmini', 'Flooring Estimate')) + '<small>' + esc(tr('%5 fire dahil', 'incl. 5% waste')) + '</small></h3><table>';
+  rows.forEach(function (r) {
+    tot += r.cost;
+    s += '<tr><td><span class="sw" style="background:' + esc(r.m.sw) + '"></span>' + esc(nm(r.m.name)) + '</td><td class="r">' + fmt(r.area, 1) + ' m²</td><td class="r">' + money(r.cost) + '</td></tr>';
+  });
+  s += '</table><div class="total"><span>' + esc(tr('Zemin malzemesi toplamı', 'Flooring total')) + '</span><b>' + money(tot) + '</b></div></section>';
+  s += '<section><h3>' + esc(tr('Plan İstatistikleri', 'Plan Stats')) + '</h3><div class="stats">'
+    + statBox(tr('Mobilya sayısı', 'Furniture'), state.furniture.length, '')
+    + statBox(tr('Yıkılan duvar', 'Walls removed'), fmt(demolishedMeters(), 1), ' m') + '</div>'
+    + '<div class="acts"><button class="btn" data-act="clearMeasures">' + esc(tr('Ölçüleri temizle', 'Clear measures')) + ' (' + state.measures.length + ')</button>'
+    + '<button class="btn danger" data-act="clearLayout">' + esc(tr('Yerleşimi temizle', 'Clear layout')) + '</button></div></section>';
+  if (IS_TOUCH) {
+    s += '<section><h3>' + esc(tr('Dokunmatik Kontroller', 'Touch Controls')) + '</h3>' + kbdRows([
+      [tr('Tek parmak sürükle', '1-finger drag'), tr('Boşlukta görüntüyü kaydırır', 'Pan on empty space')],
+      [tr('İki parmak', '2 fingers'), tr('Sıkıştırarak yakınlaştır, sürükleyerek kaydır', 'Pinch to zoom, drag to pan')],
+      [tr('Kitaplık', 'Library'), tr('Dokun: ortaya yerleştirir; basılı tutup sağa sürükle: istenen yere', 'Tap to place at center, or hold and drag right to a spot')],
+      [tr('Mobilyaya dokun', 'Tap item'), tr('Sürükleyerek taşı; üst nokta döndürür, sağ-alt kare boyutlandırır', 'Drag to move; top dot rotates, bottom-right square resizes')],
+      [tr('Araç çubuğu', 'Toolbar'), tr('Seçince alttaki çubuktan döndür / kopyala / sil', 'Bottom bar can rotate / duplicate / delete')],
+      [tr('Ölç', 'Measure'), tr('Basılı tutup çizgi sürükle veya iki noktaya dokun', 'Hold and drag a line, or tap two points')],
+      [tr('3D Gezinti', '3D walk'), tr('Joystick ile yürü, ekranı sürükleyerek bak, kapıya dokunarak aç/kapat', 'Joystick moves, drag to look, tap doors to open')]
+    ]) + '</section>';
+  }
+  s += '<section><h3>' + esc(tr('Klavye Kısayolları', 'Keyboard Shortcuts')) + '</h3>' + kbdRows([
+    [tr('Sürükle', 'Drag'), tr('Soldaki mobilyayı plana sürükle', 'Drag furniture onto the plan')],
+    ['V', tr('Seç / taşı', 'Select / move')],
+    ['M', tr('Ölç (Shift: yatay/dikey)', 'Measure (Shift: horizontal/vertical)')],
+    ['X', tr('Taşıyıcı olmayan duvarı yık (siyah = taşıyıcı)', 'Demolish non-bearing walls (black = bearing)')],
+    ['R', tr('90° döndür (Shift: ters yön)', 'Rotate 90° (Shift reverses)')],
+    [tr('Ok tuşları', 'Arrows'), tr('10 mm ince ayar (Shift: 100 mm)', 'Nudge 10mm (Shift 100mm)')],
+    ['⌘/Ctrl D', tr('Kopyala', 'Duplicate')],
+    ['Delete', tr('Sil', 'Delete')],
+    ['⌘/Ctrl Z', tr('Geri al', 'Undo')],
+    ['T', tr('2D / 3D geçiş', 'Toggle 2D / 3D')],
+    ['F', tr('Pencereye sığdır', 'Fit to window')],
+    ['Esc', tr('Seçimi kaldır', 'Deselect')]
+  ]) + '</section>';
+  return s;
+}
+function renderRoomPanel(r) {
+  var b = polyBox(r.poly), per = polyPerim(r.poly), mk = roomMatKey(r.id), cur = matOf(mk), a = polyArea(r.poly);
+  var s = '<section><h3>' + esc(tr('Oda', 'Room')) + '</h3><div class="form"><label class="full">' + esc(tr('Ad', 'Name')) + '<input id="rName" value="' + esc(nm(roomName(r.id))) + '"></label></div>';
+  s += '<div class="stats" style="margin-top:8px">'
+    + statBox(tr('Kullanım alanı', 'Floor area'), fmt(a, 2), ' m²') + statBox(tr('Çevre', 'Perimeter'), fmt(per, 1), ' m')
+    + statBox(tr('Genişlik (açıklık)', 'Width'), Math.round(b.x1 - b.x0), ' mm') + statBox(tr('Derinlik', 'Depth'), Math.round(b.y1 - b.y0), ' mm') + '</div>';
+  s += '<div class="note" style="font-size:12px">' + esc(tr('Duvar alanı (tavan 2,8 m, kapı/pencere düşülmeden) ≈ ', 'Wall area (2.8m ceiling, openings not deducted) ≈ ') + fmt(per * 2.8, 1) + ' m²') + '</div></section>';
+  s += '<section><h3>' + esc(tr('Zemin malzemesi', 'Flooring')) + '</h3><div class="mats">';
+  MATLIST.forEach(function (m) {
+    s += '<button data-mat="' + esc(m.k) + '"' + (m.k === mk ? ' class="on"' : '') + '><span class="sw" style="background:' + esc(m.sw) + '"></span><span><b>' + esc(nm(m.name)) + '</b><small>₺' + fmt(m.price, 0) + '/m²</small></span></button>';
+  });
+  s += '</div><div class="total"><span>' + esc(tr('Malzeme tahmini maliyet', 'Estimated cost')) + '</span><b>' + money(a * (cur.price || 0) * 1.05) + '</b></div></section>';
+  var inRoom = state.furniture.filter(function (f) { return f.cx > b.x0 && f.cx < b.x1 && f.cy > b.y0 && f.cy < b.y1; });
+  s += '<section><h3>' + esc(tr('Odadaki mobilyalar', 'Furniture in room')) + '<small>' + esc(tr(inRoom.length + ' adet', inRoom.length + ' items')) + '</small></h3>';
+  if (inRoom.length) {
+    s += '<table>' + inRoom.map(function (f) { return '<tr data-fid="' + esc(f.id) + '"><td>' + esc(nm(f.name)) + '</td><td class="m">' + Math.round(f.w) + '×' + Math.round(f.d) + '</td></tr>'; }).join('') + '</table>';
+  } else s += '<div class="muted12">' + esc(tr('Yok', 'None')) + '</div>';
+  s += '<div class="acts"><button class="btn" data-act="deselect">' + esc(tr('← Genel bakışa dön', '← Back to overview')) + '</button></div></section>';
+  return s;
+}
+function renderFurnPanel(f) {
+  var s = '<section><h3>' + esc(tr('Mobilya Özellikleri', 'Furniture')) + '</h3><div class="form">'
+    + '<label class="full">' + esc(tr('Ad', 'Name')) + '<input data-f="name" value="' + esc(nm(f.name)) + '"></label>'
+    + '<label>' + esc(tr('Genişlik (mm)', 'Width (mm)')) + '<input type="number" data-f="w" min="50" step="10" value="' + Math.round(f.w) + '"></label>'
+    + '<label>' + esc(tr('Derinlik (mm)', 'Depth (mm)')) + '<input type="number" data-f="d" min="50" step="10" value="' + Math.round(f.d) + '"></label>'
+    + '<label>' + esc(tr('Merkez X (mm)', 'Center X (mm)')) + '<input type="number" data-f="cx" step="10" value="' + Math.round(f.cx) + '"></label>'
+    + '<label>' + esc(tr('Merkez Y (mm)', 'Center Y (mm)')) + '<input type="number" data-f="cy" step="10" value="' + Math.round(f.cy) + '"></label>'
+    + '<label>' + esc(tr('Döndürme (°)', 'Rotation (°)')) + '<input type="number" data-f="rot" step="15" value="' + Math.round(f.rot) + '"></label>'
+    + '<label>' + esc(tr('Renk', 'Color')) + '<input type="color" data-f="color" value="' + esc(f.color) + '"></label></div>'
+    + '<div class="muted12" style="margin:10px 0 0">' + esc(tr('Taban alanı ', 'Footprint ') + fmt(f.w * f.d / 1e6, 2) + ' m²') + '</div>'
+    + '<div class="acts"><button class="btn" data-act="rot90">' + esc(tr('90° döndür', 'Rotate 90°')) + '</button><button class="btn" data-act="dup">' + esc(tr('Kopyala', 'Duplicate')) + '</button>'
+    + '<button class="btn" data-act="front">' + esc(tr('En üste getir', 'Bring to front')) + '</button><button class="btn" data-act="back">' + esc(tr('En alta gönder', 'Send to back')) + '</button>'
+    + '<button class="btn danger" data-act="del">' + esc(tr('Sil', 'Delete')) + '</button><button class="btn" data-act="deselect">' + esc(tr('← Geri', '← Back')) + '</button></div></section>';
+  s += '<section class="muted12">' + esc(tr('Taşımak için mobilyayı sürükleyin; üstteki noktayı sürükleyerek döndürün; sağ alt köşedeki kareyi sürükleyerek boyutlandırın. «Duvara yapış» açıkken duvara yaklaşınca otomatik hizalanır.',
+    'Drag to move; drag the top dot to rotate; drag the bottom-right square to resize. With "Wall snap" on, items snap flush to nearby walls.')) + '</section>';
+  return s;
+}
+function renderPanel() {
+  var p = $('#panel'), s;
+  if (ui.sel && ui.sel.kind === 'furn' && getF(ui.sel.id)) s = renderFurnPanel(getF(ui.sel.id));
+  else if (ui.sel && ui.sel.kind === 'room' && roomById(ui.sel.id)) s = renderRoomPanel(roomById(ui.sel.id));
+  else s = renderOverview();
+  var st = p.parentNode.scrollTop;
+  p.innerHTML = s;
+  p.parentNode.scrollTop = st;
+}
+function initPanelEvents() {
+  var p = $('#panel');
+  p.addEventListener('click', function (e) {
+    var t = e.target;
+    var row = t.closest('tr[data-room]');
+    if (row) { select('room', row.dataset.room); if (ui.is3d && window.View3D && window.View3D.flyToRoom) { try { window.View3D.flyToRoom(row.dataset.room); } catch (x) { } } return; }
+    var fr = t.closest('tr[data-fid]'); if (fr) { select('furn', fr.dataset.fid); return; }
+    var mb = t.closest('[data-mat]');
+    if (mb && ui.sel && ui.sel.kind === 'room') { var id = ui.sel.id; mutate(function () { state.rooms[id].mat = mb.dataset.mat; }); return; }
+    var ab = t.closest('[data-act]'); if (!ab) return;
+    switch (ab.dataset.act) {
+      case 'clearMeasures': mutate(function () { state.measures = []; }); break;
+      case 'clearLayout': clearAllFurn(); break;
+      case 'deselect': select(null); break;
+      case 'rot90': rotSel(90); break;
+      case 'dup': dupSel(); break;
+      case 'front': reorderSel(true); break;
+      case 'back': reorderSel(false); break;
+      case 'del': delSel(); break;
+    }
+  });
+  p.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.id === 'rName' && ui.sel && ui.sel.kind === 'room') {
+      var id = ui.sel.id, v = t.value.trim();
+      if (!v || v === nm(roomName(id))) { renderPanel(); return; }
+      mutate(function () { state.rooms[id].name = v; }); return;
+    }
+    var key = t.dataset && t.dataset.f;
+    if (!key || !ui.sel || ui.sel.kind !== 'furn') return;
+    var f = getF(ui.sel.id); if (!f) return;
+    if (key === 'name') { var nv = t.value.trim(); if (!nv || nv === nm(f.name)) { renderPanel(); return; } mutate(function () { f.name = nv; }); return; }
+    if (key === 'color') { mutate(function () { f.color = t.value; }); return; }
+    var v = parseFloat(t.value);
+    if (!isFinite(v)) { renderPanel(); return; }
+    mutate(function () {
+      if (key === 'w' || key === 'd') f[key] = Math.max(50, Math.round(v));
+      else if (key === 'rot') f.rot = norm(v);
+      else f[key] = Math.round(v);
+    });
+  });
+}
+
+/* ===================== yüzen çubuk ===================== */
+function renderFab() {
+  var fab = $('#fab'), sel = ui.sel, s = '';
+  if (sel && sel.kind === 'furn' && getF(sel.id)) {
+    var f = getF(sel.id);
+    s = '<span class="name">' + esc(nm(f.name)) + '</span><button class="btn" data-fab="rotL" title="' + esc(tr('Saat yönünün tersine 90°', '90° counter-clockwise')) + '">↺</button>'
+      + '<button class="btn" data-fab="rotR">↻ ' + esc(tr('Döndür', 'Rotate')) + '</button><button class="btn" data-fab="dup">' + esc(tr('Kopyala', 'Duplicate')) + '</button>'
+      + '<button class="btn danger" data-fab="del">' + esc(tr('Sil', 'Delete')) + '</button><span class="sep"></span>'
+      + '<button class="btn narrow-only" data-fab="props">' + esc(tr('Özellikler', 'Properties')) + '</button><button class="btn" data-fab="done">' + esc(tr('Bitti', 'Done')) + '</button>';
+  } else if (sel && sel.kind === 'room' && roomById(sel.id)) {
+    s = '<span class="name">' + esc(nm(roomName(sel.id))) + '</span><button class="btn narrow-only" data-fab="props">' + esc(tr('Zemin / Özellikler', 'Floor / Properties')) + '</button><button class="btn" data-fab="done">' + esc(tr('Bitti', 'Done')) + '</button>';
+  }
+  fab.innerHTML = s;
+  fab.classList.toggle('show', !!s);
+}
+function initFab() {
+  $('#fab').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-fab]'); if (!b) return;
+    switch (b.dataset.fab) {
+      case 'rotL': rotSel(-90); break;
+      case 'rotR': rotSel(90); break;
+      case 'dup': dupSel(); break;
+      case 'del': delSel(); break;
+      case 'done': select(null); break;
+      case 'props': openDrawer('right'); break;
+    }
+  });
+}
+
+/* ===================== kitaplık ===================== */
+function previewSvg(it, cls) {
+  var pad = Math.max(it.w, it.d) * 0.08;
+  return '<svg viewBox="' + n2(-it.w / 2 - pad) + ' ' + n2(-it.d / 2 - pad) + ' ' + n2(it.w + 2 * pad) + ' ' + n2(it.d + 2 * pad) + '" xmlns="' + NS + '"><g stroke="#3d3a34" stroke-width="1" stroke-linejoin="round">' + sym(it.type, it.w, it.d, it.color) + '</g></svg>';
+}
+function renderLib() {
+  var s = '';
+  LIBCATS.forEach(function (c, ci) {
+    s += '<h4>' + esc(nm(c.cat)) + '</h4><div class="grid">';
+    c.items.forEach(function (it, ii) {
+      s += '<div class="item" data-c="' + ci + '" data-i="' + ii + '" title="' + esc(tr('Eklemek için tıklayın veya plandaki yere sürükleyin', 'Click to add, or drag onto the plan')) + '">' + previewSvg(it) + '<b>' + esc(nm(it.name)) + '</b><small>' + it.w + '×' + it.d + '</small></div>';
+    });
+    s += '</div>';
+  });
+  $('#lib').innerHTML = s;
+  $('#libHint').textContent = IS_TOUCH
+    ? tr('Mobilyalar gerçek ölçüde (mm) çizilir. Dokunarak ortaya yerleştirin veya basılı tutup sağa, plana / 3D zemine sürükleyin (yukarı-aşağı kaydırma listeyi kaydırır). Eklendikten sonra sağ panelden genişlik, derinlik ve rengi değiştirebilirsiniz.',
+      'Furniture is drawn at real size (mm). Tap to place at the center, or hold and drag right onto the plan / 3D floor (swipe up/down to scroll). Edit size and color in the right panel afterwards.')
+    : tr('Mobilyalar gerçek ölçüde (mm) çizilir. Tıklayarak ekranın ortasına ekleyin veya plana / 3D zemine sürükleyin. Eklendikten sonra sağ panelden genişlik, derinlik ve rengi değiştirebilirsiniz.',
+      'Furniture is drawn at real size (mm). Click to add at the center, or drag onto the plan / 3D floor. Edit size and color in the right panel afterwards.');
+}
+var libDrag = null;
+function dropTargetOK(x, y) {
+  var el = document.elementFromPoint(x, y);
+  if (!el) return false;
+  if (!mainEl.contains(el)) return false;
+  if (el.closest('#fab, #walkOverlay, #joy, #walkExit')) return false;
+  return true;
+}
+function ghostScaleAt(x, y) {
+  if (ui.is3d && window.View3D && window.View3D.dropInfo) { try { var i = window.View3D.dropInfo(x, y); if (i && i.scale) return i.scale; } catch (e) { } }
+  return view.s;
+}
+function initLibDrag() {
+  var lib = $('#lib');
+  lib.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    var el = e.target.closest('.item'); if (!el) return;
+    var it = LIBCATS[+el.dataset.c].items[+el.dataset.i];
+    libDrag = { it: it, el: el, sx: e.clientX, sy: e.clientY, on: false, id: e.pointerId, touch: e.pointerType === 'touch' };
+    closeMenu();
+  });
+  function ghostUpdate(e) {
+    var g = $('#ghost'), s = ghostScaleAt(e.clientX, e.clientY), it = libDrag.it;
+    var w = Math.max(28, it.w * s), h = Math.max(20, it.d * s);
+    g.style.left = e.clientX + 'px'; g.style.top = e.clientY + 'px';
+    if (g._k !== it.name + '|' + Math.round(w) + '|' + Math.round(h)) {
+      g._k = it.name + '|' + Math.round(w) + '|' + Math.round(h);
+      g.innerHTML = previewSvg(it).replace('<svg ', '<svg width="' + w + '" height="' + h + '" ');
+    }
+  }
+  document.addEventListener('pointermove', function (e) {
+    if (!libDrag || e.pointerId !== libDrag.id) return;
+    var dx = e.clientX - libDrag.sx, dy = e.clientY - libDrag.sy;
+    if (!libDrag.on) {
+      if (libDrag.touch) { if (Math.abs(dx) > 9 && Math.abs(dx) > Math.abs(dy)) libDrag.on = true; else return; }
+      else { if (Math.hypot(dx, dy) > 4) libDrag.on = true; else return; }
+      libDrag.el.classList.add('dragging'); $('#ghost').style.display = 'block'; $('#ghost')._k = '';
+    }
+    ghostUpdate(e);
+    if (narrowNow()) { var d = $('#libAside'); if (d.classList.contains('open') && e.clientX > d.getBoundingClientRect().right) closeDrawers(); }
+    e.preventDefault();
+  });
+  function finish(e, cancel) {
+    if (!libDrag || e.pointerId !== libDrag.id) return;
+    var L = libDrag; libDrag = null;
+    L.el.classList.remove('dragging'); $('#ghost').style.display = 'none';
+    if (cancel) return;
+    if (!L.on) {
+      if (Math.hypot(e.clientX - L.sx, e.clientY - L.sy) > thr() + 2) return;
+      var p = defaultAddPoint(); addFurn(L.it, p.x, p.y);
+      if (narrowNow()) closeDrawers();
+      return;
+    }
+    if (!dropTargetOK(e.clientX, e.clientY)) return;
+    if (ui.is3d) {
+      var g = null;
+      try { g = window.View3D && window.View3D.dropPoint && window.View3D.dropPoint(e.clientX, e.clientY); } catch (x) { }
+      if (!g) { toast(tr('Zemine bırakın', 'Drop it on the floor')); return; }
+      addFurn(L.it, g.x, g.y);
+    } else {
+      var q = toMM(e.clientX, e.clientY); addFurn(L.it, q.x, q.y);
+    }
+  }
+  document.addEventListener('pointerup', function (e) { finish(e, false); });
+  document.addEventListener('pointercancel', function (e) { finish(e, true); });
+}

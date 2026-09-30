@@ -299,6 +299,8 @@ function defaultFurniture() {
   F('counter', 'Mutfak Tezgâhı', 6775, 1500, 1600, 600, 90);
   F('ovencol', 'Buharlı Fırın Boy Dolabı', 6775, 2600, 600, 600, 90);
   F('dishwasher', 'Bulaşık Makinesi', 7475, 300, 600, 600, 0);
+  // Evye ve ocak tezgâhın üstünde durur (modelde altlarında dolap yok)
+  F('counter', 'Mutfak Tezgâhı', 8675, 300, 1800, 600, 0);
   F('ksink', 'Evye', 8175, 225, 800, 450, 0);
   F('stove', 'Ocak', 8950, 225, 750, 450, 0);
 

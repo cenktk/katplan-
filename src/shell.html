@@ -1,0 +1,116 @@
+<div class="app" id="app">
+  <header id="topbar">
+    <div class="grp" id="paneBtns">
+      <button class="btn chip on" id="tgLib" data-en="◧ Library" data-en-title="Hide library ( [ )" title="Mobilya kitaplığını gizle ( [ )">◧ Mobilya</button>
+      <button class="btn chip on" id="tgPanel" data-en="Properties ◨" data-en-title="Hide properties ( ] )" title="Özellik panelini gizle ( ] )">Özellikler ◨</button>
+    </div>
+    <div class="brand"><b id="brandTitle" data-en="3BR 2LR 2BA · Interior Design">3+1 Daire · Dekorasyon Tasarımı</b><span id="brandSub"></span></div>
+    <div class="grp seg" id="viewSeg" data-en-title="Switch 2D / 3D (T)" title="2D / 3D geçiş (T)">
+      <i class="pill"></i>
+      <button class="btn on" data-view="2d" data-en="2D Plan">2D Plan</button>
+      <button class="btn" data-view="3d" data-en="3D Scene">3D Sahne</button>
+    </div>
+    <div class="grp only2d" id="tools">
+      <button class="btn on" data-tool="select" data-en="Select" data-en-title="Select / Move (V)" title="Seç / Taşı (V)">Seç</button>
+      <button class="btn" data-tool="measure" data-en="Measure" data-en-title="Measure (M)" title="Ölç (M)">Ölç</button>
+      <button class="btn" data-tool="demolish" data-en="Demolish" data-en-title="Demolish non-bearing walls (X)" title="Taşıyıcı olmayan duvarı yık (X)">Duvar Yık</button>
+    </div>
+    <div class="grp only2d" id="zoomGrp">
+      <button class="btn" id="zOut" data-en-title="Zoom out" title="Uzaklaştır">−</button>
+      <button class="btn" id="zIn" data-en-title="Zoom in" title="Yakınlaştır">＋</button>
+      <button class="btn" id="zFit" data-en="Fit" data-en-title="Fit to window (F)" title="Pencereye sığdır (F)">Sığdır</button>
+      <button class="btn" id="z60" data-en-title="Show at 1:60 (same scale as the original plan)" title="1:60 göster (özgün planla aynı ölçek)">1:60</button>
+      <button class="btn" id="z100" data-en-title="Show at 1:100" title="1:100 göster">1:100</button>
+    </div>
+    <div class="grp only3d" id="modes3d">
+      <button class="btn on" data-mode="orbit" data-en="Orbit">Kuşbakışı</button>
+      <button class="btn" data-mode="walk" data-en="Walk">Gezinti</button>
+    </div>
+    <div class="grp only3d" id="cams3d">
+      <button class="btn" id="vIso" data-en="Iso">Eğik</button>
+      <button class="btn" id="vTop" data-en="Top">Üstten</button>
+    </div>
+    <div class="grp" id="histGrp">
+      <button class="btn" id="undo" disabled style="opacity:.4" data-en="Undo" data-en-title="Undo (Ctrl+Z)" title="Geri al (Ctrl+Z)">Geri Al</button>
+      <button class="btn" id="redo" disabled style="opacity:.4" data-en="Redo" data-en-title="Redo (Ctrl+Shift+Z)" title="Yinele (Ctrl+Shift+Z)">Yinele</button>
+      <button class="btn danger" id="clearAll" data-en="Clear" data-en-title="Remove all furniture and appliances (undoable)" title="Tüm mobilya ve cihazları kaldır (geri alınabilir)">Yerleşimi Temizle</button>
+    </div>
+    <div class="grp only2d" id="layers">
+      <button class="btn chip on" data-layer="dims" data-en="Dims">Ölçü</button>
+      <button class="btn chip on" data-layer="rooms" data-en="Rooms">Odalar</button>
+      <button class="btn chip on" data-layer="furn" data-en="Furniture">Mobilya</button>
+      <button class="btn chip" data-layer="grid" data-en="Grid">Izgara</button>
+      <button class="btn chip" data-layer="bearing" data-en="Bearing walls">Taşıyıcı duvar</button>
+      <button class="btn chip on" data-layer="snap" data-en="Wall snap" data-en-title="Snap furniture to walls while dragging" title="Sürüklerken mobilya duvara yapışsın">Duvara yapış</button>
+    </div>
+    <div class="grp only3d" id="cuts3d">
+      <button class="btn chip on" data-cut="2.8" data-en="Full walls">Tam duvar</button>
+      <button class="btn chip" data-cut="1.2" data-en="Cut walls">Kesik duvar</button>
+    </div>
+    <div class="grp only3d" id="toggles3d">
+      <button class="btn chip on" data-t="furn" data-en="Furniture">Mobilya</button>
+      <button class="btn chip on" data-t="labels" data-en="Labels">Oda adları</button>
+      <button class="btn chip" data-t="night" data-en="Night">Gece</button>
+    </div>
+    <div class="grp only3d" id="sunGrp">
+      <label class="range"><span data-en="Sun">Güneş</span><input type="range" id="sun" min="7" max="18" step="0.25" value="10"><b id="sunVal">10:00</b></label>
+    </div>
+    <div class="spacer"></div>
+    <button class="btn outl" id="langBtn" title="Switch language / 切换语言">EN</button>
+    <button class="btn outl" id="fullscreen" data-en="⛶ Fullscreen" data-en-title="Fullscreen (Shift+F)" title="Tam ekran (Shift+F)">⛶ Tam ekran</button>
+    <details class="menu" id="fileMenu">
+      <summary class="btn" data-en="File ▾">Dosya ▾</summary>
+      <div class="menu-pop">
+        <button class="btn" id="mExportImg" data-en="Export image">Görüntüyü dışa aktar</button>
+        <button class="btn" id="mExportJson" data-en="Export plan JSON">Planı JSON olarak dışa aktar</button>
+        <button class="btn" id="mImport" data-en="Import plan">Planı içe aktar</button>
+        <button class="btn danger" id="mReset" data-en="Reset to default">Varsayılan plana sıfırla</button>
+      </div>
+    </details>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+  </header>
+
+  <aside class="lib" id="libAside">
+    <div>
+      <div id="lib3d">
+        <h4 data-en="Rooms · click to fly there">Odalar · tıklayınca odaya uçulur</h4>
+        <div id="roomList"></div>
+      </div>
+      <div id="lib"></div>
+      <div class="hint" id="libHint"></div>
+    </div>
+  </aside>
+
+  <main id="stage">
+    <svg id="plan" xmlns="http://www.w3.org/2000/svg" tabindex="-1"></svg>
+    <div id="view3d"></div>
+    <div id="scalebar"><span id="sbTxt">2 m</span><i id="sbBar"></i></div>
+    <div id="modehint"></div>
+    <div id="hint3d"></div>
+    <div id="walkOverlay" style="display:none">
+      <div class="card">
+        <h3 data-en="Walk mode">Gezinti modu</h3>
+        <p data-en="Click to start at the front door" id="wo1">Başlamak için tıklayın (giriş kapısından girilir)</p>
+        <p id="wo2"><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> yürü · fare: bak · <kbd>Shift</kbd> hızlı</p>
+        <p id="wo3"><kbd>E</kbd> önündeki kapıyı aç/kapat · <kbd>Esc</kbd> duraklat</p>
+      </div>
+    </div>
+    <div id="cross" style="display:none"></div>
+    <div id="joy" style="display:none"><i id="joyKnob"></i></div>
+    <button class="btn primary" id="walkExit" style="display:none" data-en="Exit walk">Gezintiden çık</button>
+    <div id="fab"></div>
+  </main>
+
+  <aside class="right" id="rightAside"><div id="panel"></div></aside>
+
+  <footer>
+    <span class="st2d">X <b id="cx">—</b></span>
+    <span class="st2d">Y <b id="cy">—</b></span>
+    <span class="st2d"><span data-en="Scale">Geçerli ölçek</span> <b id="scaleTxt">1:69</b></span>
+    <span class="st2d" id="hoverRoom"></span>
+    <span class="grow"></span>
+    <span id="tip"></span>
+  </footer>
+  <div id="toast"></div>
+  <div id="ghost"></div>
+</div>

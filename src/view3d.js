@@ -11,7 +11,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const isEn = () => /^en/i.test(document.documentElement.lang || '');
+const isEn = () => (typeof LANG !== 'undefined' ? LANG === 'en' : /^en/i.test(document.documentElement.lang || ''));
 const L = (t, e) => (typeof window.tr === 'function' ? window.tr(t, e) : (isEn() ? e : t));
 const coarse = () => { try { return matchMedia('(pointer:coarse)').matches; } catch (e) { return false; } };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -780,7 +780,6 @@ async function exit() {
   if (flyAnim) { flyAnim.cancel = true; flyAnim = null; flying = false; }
   mainEl.classList.add('animating');
   setClasses(false);
-  setTip(false);
   const from = curPose();
   const pp = planPose();
   await new Promise(res => runAnim(1300, t => {
@@ -799,13 +798,9 @@ async function exit() {
   updateHint();
 }
 function setTip(in3d) {
-  const t = $('#tip'); if (!t) return;
-  if (in3d) t.textContent = coarse()
-    ? L('Tek parmak döndürür · iki parmak yakınlaştırır / kaydırır · düzenlemek için mobilyaya veya zemine dokunun · kapıya dokunarak aç/kapat', '1 finger orbits · 2 fingers zoom / pan · tap furniture or floor to edit · tap doors to open')
-    : L('3D sahne plan ile anlık senkron · sağ paneldeki değişiklikler hemen uygulanır · T: 2D', '3D stays in sync with the plan · panel edits apply instantly · T for 2D');
-  else t.textContent = coarse()
-    ? L('Kitaplıktan dokunun veya sürükleyin · tek parmak kaydırır · iki parmak yakınlaştırır · seçince alt çubuktan döndür / kopyala / sil', 'Tap or drag from the library · 1 finger pans · pinch zooms · bottom bar rotates / duplicates / deletes')
-    : L('Soldaki mobilyayı plana sürükleyin · tekerlek yakınlaştırır · boşluğu sürükleyerek kaydırın · T: 3D', 'Drag furniture onto the plan · scroll to zoom · drag empty space to pan · T for 3D');
+  // masaüstü metinlerini 2D tarafı (updateTip) yazar; yalnız dokunmatik 3D ipucu burada
+  const t = $('#tip');
+  if (t && in3d && coarse()) t.textContent = L('Tek parmak döndürür · iki parmak yakınlaştırır / kaydırır · düzenlemek için mobilyaya veya zemine dokunun · kapıya dokunarak aç/kapat', '1 finger orbits · 2 fingers zoom / pan · tap furniture or floor to edit · tap doors to open');
 }
 function updateHint() {
   const h = $('#hint3d'); if (!h) return;
@@ -817,20 +812,6 @@ function updateHint() {
     ? L('Tek parmak döndürür · iki parmak yakınlaştırır / kaydırır · seçili mobilyayı sürükleyip yerleştirin · kapıya dokunarak aç/kapat', '1 finger orbits · 2 fingers zoom / pan · select furniture to drag it · tap doors to open')
     : L('Sol tuş: döndür · sağ tuş: kaydır · tekerlek: yakınlaştır · seçili mobilyayı sürükleyip yerleştir · kapıya tıklayarak aç/kapat', 'Left-drag orbits · right-drag pans · scroll zooms · select furniture to drag it · click doors to open');
   h.textContent = s;
-  // gezinti kaplaması metinleri
-  const o1 = $('#wo1'), o2 = $('#wo2'), o3 = $('#wo3'), ttl = $('#walkOverlay h3');
-  if (o1 && o2 && o3) {
-    const tc = coarse();
-    if (ttl) ttl.textContent = L('Gezinti modu', 'Walk mode');
-    o1.textContent = tc ? L('Başlamak için dokunun (giriş kapısından girilir)', 'Tap to start at the front door') : L('Başlamak için tıklayın (giriş kapısından girilir)', 'Click to start at the front door');
-    if (tc) {
-      o2.textContent = L('Sol alttaki joystick ile yürü · ekranı sürükleyerek bak', 'Joystick moves · drag on screen to look');
-      o3.textContent = L('Kapıya dokunarak aç/kapat · «Gezintiden çık» ile kuşbakışına dön', 'Tap doors to open · "Exit walk" returns to orbit');
-    } else {
-      o2.innerHTML = L('<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> yürü · fare: bak · <kbd>Shift</kbd> hızlı', '<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move · mouse looks · <kbd>Shift</kbd> runs');
-      o3.innerHTML = L('<kbd>E</kbd> önündeki kapıyı aç/kapat · <kbd>Esc</kbd> duraklat', '<kbd>E</kbd> opens the door ahead · <kbd>Esc</kbd> pauses');
-    }
-  }
 }
 
 /* ------------------------------------------------------------------ seçenekler (kesit, gece, saat ...) */
@@ -1276,8 +1257,7 @@ function bindHeader() {
     if (b.dataset.t === 'night') opt.night = on; else if (b.dataset.t === 'furn') opt.furn = on; else if (b.dataset.t === 'labels') opt.labels = on;
   });
   bindWalkUI();
-  new MutationObserver(() => { if (!inited) return; sigLabel = sigList = ''; if (active) { sync(); } updateHint(); if (active) setTip(true); })
-    .observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+  
 }
 
 /* ------------------------------------------------------------------ dışa aktarma */
@@ -1300,7 +1280,8 @@ const API = {
   enter, exit,
   toggle() { return active && !busyAnim ? exit() : enter(); },
   sync, resize,
-  refresh() { sigLabel = sigList = ''; if (inited && active) sync(); updateHint(); },
+  refresh() { sigLabel = sigList = ''; if (inited && active) { sync(); setTip(true); } updateHint(); },
+  onLang() { API.refresh(); },
   setMode, setCut, setNight, setFurn, setLabels, setHour,
   flyToRoom, flyToAll, flyIso() { return flyTo(isoWhole()); }, flyTop() { return flyTo(topWhole()); },
   groundPointAt, screenCenterGround, pxPerMm,
@@ -1323,6 +1304,8 @@ const API = {
   get scene() { return scene; },
   get camera() { return camera; },
   init,
+  // sınama yardımcısı: kamerayı 2D ile aynı üstten pozuna koyar
+  _toPlanPose() { controls.enabled = false; setPose(planPose()); },
 };
 window.View3D = API;
 

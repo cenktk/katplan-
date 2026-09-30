@@ -32,7 +32,7 @@ kbd{font:11px ui-monospace,Menlo,monospace;background:#f2ece2;border:1px solid v
   .app.hide-panel{grid-template-columns:236px minmax(0,1fr) 0}
   .app.hide-lib.hide-panel{grid-template-columns:0 minmax(0,1fr) 0}
 }
-header{grid-column:1/-1;grid-row:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 14px;
+header{grid-column:1/-1;grid-row:1;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;padding:8px 14px 7px;
   background:var(--panel);border-bottom:1px solid var(--line);position:relative;z-index:8}
 footer{grid-column:1/-1;grid-row:3;height:30px;display:flex;gap:18px;align-items:center;padding:0 14px;background:var(--panel);
   border-top:1px solid var(--line);color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;white-space:nowrap}
@@ -139,6 +139,7 @@ body.m3d #lib3d{display:block}
 #panel td{padding:4px 0;border-bottom:1px dashed #eee6d9}
 #panel tr:last-child td{border-bottom:0}
 #panel td.r{text-align:right;white-space:nowrap}
+#panel td.r+td.r{padding-left:14px}
 #panel tr[data-room],#panel tr[data-fid]{cursor:pointer}
 #panel tr[data-room]:hover,#panel tr[data-fid]:hover{background:#faf5ee}
 #panel td .sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px;vertical-align:-1px;border:1px solid rgba(0,0,0,.12)}
@@ -173,7 +174,7 @@ body.m3d #lib3d{display:block}
 @media (pointer:coarse){#panel td{padding:7px 2px}.mats button{padding:9px 8px}}
 
 /* ---------- SVG ---------- */
-#plan{display:block;width:100%;height:100%;touch-action:none;transition:opacity .45s ease}
+#plan{outline:none;display:block;width:100%;height:100%;touch-action:none;transition:opacity .45s ease}
 #plan text{font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
 #plan *{vector-effect:non-scaling-stroke}
 #plan .wall{pointer-events:none}
@@ -236,11 +237,12 @@ main.drawer-panel #fab{opacity:0;visibility:hidden;pointer-events:none}
   aside.lib.open,aside.right.open{transform:none;box-shadow:0 0 30px rgba(40,30,20,.18)}
   .grid{grid-template-columns:repeat(3,1fr)}
   .brand span{display:none}
+  .brand b{font-size:14px;letter-spacing:.3px;white-space:normal;max-width:150px;line-height:1.2}
   .st2d{display:none}
   #fab .narrow-only{display:inline-block}
 }
 @media (pointer:coarse){
-  header{padding:8px 12px;gap:8px}
+  header{padding:8px 12px 8px;gap:8px}
   .grp{padding:3px;border-radius:10px}
   .btn{padding:8px 12px;min-height:38px;border-radius:8px}
   .seg .btn{width:92px}
@@ -685,6 +687,8 @@ function defaultFurniture() {
   F('counter', 'Mutfak Tezgâhı', 6775, 1500, 1600, 600, 90);
   F('ovencol', 'Buharlı Fırın Boy Dolabı', 6775, 2600, 600, 600, 90);
   F('dishwasher', 'Bulaşık Makinesi', 7475, 300, 600, 600, 0);
+  // Evye ve ocak tezgâhın üstünde durur (modelde altlarında dolap yok)
+  F('counter', 'Mutfak Tezgâhı', 8675, 300, 1800, 600, 0);
   F('ksink', 'Evye', 8175, 225, 800, 450, 0);
   F('stove', 'Ocak', 8950, 225, 750, 450, 0);
 
@@ -1405,6 +1409,770 @@ function setTool(t) {
   renderMeasure();
 }
 
+/* ===================== 2D işaretçi etkileşimi ===================== */
+var act = null, pointers = {}, pinch = null;
+function thr() { return IS_TOUCH ? 9 : 4; }
+function pcount() { return Object.keys(pointers).length; }
+function hoverInfo(e) {
+  var p = toMM(e.clientX, e.clientY);
+  $('#cx').textContent = Math.round(p.x) + ' mm'; $('#cy').textContent = Math.round(p.y) + ' mm';
+  var hr = $('#hoverRoom');
+  if (!act) {
+    var r = roomAt(p.x, p.y);
+    hr.innerHTML = r ? '<b>' + esc(roomName(r.id)) + '</b> ' + fmt(polyArea(r.poly), 2) + ' m²' : '';
+  } else hr.innerHTML = '';
+}
+function startPinch() {
+  var ids = Object.keys(pointers); if (ids.length < 2) return;
+  var a = pointers[ids[0]], b = pointers[ids[1]];
+  var r = svg.getBoundingClientRect(), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, s0: view.s, wx: view.x0 + (mx - r.left) / view.s, wy: view.y0 + (my - r.top) / view.s };
+  cancelAct();
+}
+function cancelAct() {
+  if (act) { if (act.type === 'move' || act.type === 'rot' || act.type === 'size') { if (act.moved) commit(); else pendingSnap = null; } }
+  act = null; ui.mpend = null; ui.mcur = null; svg.classList.remove('panning'); renderMeasure();
+}
+function onDown(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  closeDrawers(); closeMenu();
+  if (e.pointerType === 'touch') {
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (pcount() === 2) { startPinch(); try { svg.setPointerCapture(e.pointerId); } catch (x) { } return; }
+    if (pcount() > 2) return;
+  }
+  try { svg.setPointerCapture(e.pointerId); } catch (x) { }
+  var P = toMM(e.clientX, e.clientY), tg = e.target;
+  if (ui.tool === 'measure') {
+    var pt = snapPoint(P.x, P.y, ui.mpend, e.shiftKey);
+    if (ui.mpend) {
+      var a = ui.mpend;
+      if (Math.hypot(pt.x - a.x, pt.y - a.y) > 20) mutate(function () { state.measures.push({ a: { x: a.x, y: a.y }, b: { x: pt.x, y: pt.y } }); });
+      ui.mpend = null; ui.mcur = null; act = { type: 'none' }; renderMeasure();
+    } else {
+      ui.mpend = pt; ui.mcur = pt; act = { type: 'measure', sx: e.clientX, sy: e.clientY, moved: false, pid: e.pointerId };
+      renderMeasure();
+    }
+    return;
+  }
+  var h = tg.closest && tg.closest('[data-handle]');
+  if (h && ui.sel && ui.sel.kind === 'furn') {
+    var f = getF(ui.sel.id);
+    if (f) {
+      snap();
+      act = { type: h.dataset.handle === 'rot' ? 'rot' : 'size', id: f.id, moved: false, sx: e.clientX, sy: e.clientY, w0: f.w, d0: f.d, cx0: f.cx, cy0: f.cy, rot0: f.rot };
+      return;
+    }
+  }
+  if (ui.tool === 'demolish') {
+    var wl = tg.closest && tg.closest('.wall');
+    if (wl) { toggleDemolish(+wl.dataset.wall); act = { type: 'none' }; return; }
+  }
+  if (ui.tool === 'select') {
+    var fg = tg.closest && tg.closest('g.furn');
+    if (fg) {
+      var ff = getF(fg.dataset.id);
+      if (ff) {
+        if (!ui.sel || ui.sel.kind !== 'furn' || ui.sel.id !== ff.id) select('furn', ff.id);
+        snap();
+        act = { type: 'move', id: ff.id, moved: false, sx: e.clientX, sy: e.clientY, ox: P.x - ff.cx, oy: P.y - ff.cy };
+        return;
+      }
+    }
+  }
+  var rm = tg.closest && tg.closest('[data-room]');
+  act = { type: 'pan', sx: e.clientX, sy: e.clientY, x0: view.x0, y0: view.y0, moved: false, room: rm ? rm.dataset.room : null };
+}
+function onMove(e) {
+  if (e.pointerType === 'touch' && pointers[e.pointerId]) {
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    if (pinch && pcount() >= 2) {
+      var ids = Object.keys(pointers), a = pointers[ids[0]], b = pointers[ids[1]], r = svg.getBoundingClientRect();
+      var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, ns = clamp(pinch.s0 * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0), 0.012, 2);
+      view.s = ns; view.x0 = pinch.wx - (mx - r.left) / ns; view.y0 = pinch.wy - (my - r.top) / ns;
+      applyView(); return;
+    }
+  }
+  hoverInfo(e);
+  if (!act) return;
+  var P = toMM(e.clientX, e.clientY);
+  if (act.type === 'measure') {
+    if (!act.moved && Math.hypot(e.clientX - act.sx, e.clientY - act.sy) > thr()) act.moved = true;
+    ui.mcur = snapPoint(P.x, P.y, ui.mpend, e.shiftKey); renderMeasure(); return;
+  }
+  if (act.type === 'none') { if (ui.tool === 'measure' && ui.mpend) { ui.mcur = snapPoint(P.x, P.y, ui.mpend, e.shiftKey); renderMeasure(); } return; }
+  if (!act.moved && Math.hypot(e.clientX - act.sx, e.clientY - act.sy) <= thr()) return;
+  act.moved = true;
+  if (act.type === 'pan') {
+    svg.classList.add('panning');
+    view.x0 = act.x0 - (e.clientX - act.sx) / view.s; view.y0 = act.y0 - (e.clientY - act.sy) / view.s;
+    applyView(); return;
+  }
+  var f = getF(act.id); if (!f) return;
+  if (act.type === 'move') {
+    var q = snapMove(f, P.x - act.ox, P.y - act.oy); f.cx = q.x; f.cy = q.y;
+  } else if (act.type === 'rot') {
+    var ang = Math.atan2(P.y - f.cy, P.x - f.cx) * 180 / Math.PI + 90;
+    f.rot = e.shiftKey ? norm(ang) : norm(Math.round(ang / 15) * 15);
+  } else if (act.type === 'size') {
+    var rad = act.rot0 * Math.PI / 180, dx = P.x - act.cx0, dy = P.y - act.cy0;
+    var lx = dx * Math.cos(rad) + dy * Math.sin(rad), ly = -dx * Math.sin(rad) + dy * Math.cos(rad);
+    var nw = Math.max(100, Math.round((lx + act.w0 / 2) / 10) * 10), nd = Math.max(100, Math.round((ly + act.d0 / 2) / 10) * 10);
+    var ncx = -act.w0 / 2 + nw / 2, ncy = -act.d0 / 2 + nd / 2;
+    f.w = nw; f.d = nd;
+    f.cx = Math.round(act.cx0 + ncx * Math.cos(rad) - ncy * Math.sin(rad)); f.cy = Math.round(act.cy0 + ncx * Math.sin(rad) + ncy * Math.cos(rad));
+  }
+  renderFurn(); renderSel();
+  if (ui.is3d) sync3d();
+}
+function onUp(e) {
+  if (e.pointerType === 'touch') {
+    delete pointers[e.pointerId];
+    if (pinch) { if (pcount() < 2) pinch = null; if (pcount() === 0) act = null; return; }
+  }
+  svg.classList.remove('panning');
+  var a = act; act = null;
+  if (!a) return;
+  if (a.type === 'measure') {
+    if (a.moved && ui.mpend) {
+      var P = toMM(e.clientX, e.clientY), pt = snapPoint(P.x, P.y, ui.mpend, e.shiftKey), s0 = ui.mpend;
+      if (Math.hypot(pt.x - s0.x, pt.y - s0.y) > 20) mutate(function () { state.measures.push({ a: { x: s0.x, y: s0.y }, b: { x: pt.x, y: pt.y } }); });
+      ui.mpend = null; ui.mcur = null; renderMeasure();
+    }
+    return;
+  }
+  if (a.type === 'move' || a.type === 'rot' || a.type === 'size') {
+    if (a.moved) commit(); else pendingSnap = null;
+    return;
+  }
+  if (a.type === 'pan' && !a.moved && ui.tool === 'select') {
+    if (a.room) select('room', a.room); else select(null);
+  }
+}
+function toggleDemolish(i) {
+  var w = _WALLS[i]; if (!w) return;
+  if (w[4] === 'b') { toast(tr('Taşıyıcı duvar (siyah) yıkılamaz', 'Load-bearing walls (black) cannot be removed')); return; }
+  if (w[4] === 'e') { toast(tr('Dış duvarlar binanın dış kabuğudur, yıkılması önerilmez', 'Exterior walls are part of the building envelope and should not be removed')); return; }
+  var key = 'w' + i, was = state.demolished.indexOf(key) >= 0;
+  mutate(function () {
+    if (was) state.demolished.splice(state.demolished.indexOf(key), 1); else state.demolished.push(key);
+  });
+  if (was) toast(tr('Duvar geri getirildi', 'Wall restored'));
+  else toast(tr(Math.round(Math.max(w[2] - w[0], w[3] - w[1])) + ' mm duvar yıkım için işaretlendi', 'Marked ' + Math.round(Math.max(w[2] - w[0], w[3] - w[1])) + ' mm of wall for removal'));
+}
+function initPointer() {
+  svg.addEventListener('pointerdown', onDown);
+  svg.addEventListener('pointermove', onMove);
+  svg.addEventListener('pointerup', onUp);
+  svg.addEventListener('pointercancel', function (e) { if (e.pointerType === 'touch') delete pointers[e.pointerId]; if (pcount() < 2) pinch = null; cancelAct(); });
+  svg.addEventListener('pointerleave', function () { if (!act) { $('#cx').textContent = '—'; $('#cy').textContent = '—'; $('#hoverRoom').innerHTML = ''; } });
+  svg.addEventListener('contextmenu', function (e) { if (ui.tool === 'measure') { e.preventDefault(); ui.mpend = null; ui.mcur = null; act = null; renderMeasure(); } });
+  svg.addEventListener('dblclick', function (e) {
+    if (ui.tool !== 'select') return;
+    var el = document.elementFromPoint(e.clientX, e.clientY);
+    var fg = el && el.closest && el.closest('g.furn'); if (!fg) return;
+    var f = getF(fg.dataset.id); if (!f) return;
+    mutate(function () { f.rot = norm(f.rot + 90); });
+  });
+  svg.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var k = e.ctrlKey ? 0.01 : 0.0015;
+    zoomTo(view.s * Math.exp(-e.deltaY * k), e.clientX, e.clientY);
+  }, { passive: false });
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function (n) { document.addEventListener(n, function (e) { e.preventDefault(); }, { passive: false }); });
+  document.addEventListener('pointerdown', function (e) { var m = $('#fileMenu'); if (m.open && !m.contains(e.target)) m.open = false; });
+}
+function closeMenu() { var m = $('#fileMenu'); if (m) m.open = false; }
+
+/* ===================== mobilya ekleme / silme ===================== */
+function addFurn(it, x, y) {
+  var f = { id: newId(), type: it.type, name: it.name, cx: Math.round(x / 10) * 10, cy: Math.round(y / 10) * 10, w: it.w, d: it.d, rot: 0, color: it.color };
+  pushOut(f);
+  snap();
+  if (it.type === 'rug') state.furniture.unshift(f); else state.furniture.push(f);
+  ui.sel = { kind: 'furn', id: f.id };
+  commit();
+  toast(tr('«' + it.name + '» eklendi ' + it.w + '×' + it.d, 'Added "' + nm(it.name) + '" ' + it.w + '×' + it.d));
+  return f;
+}
+function defaultAddPoint() {
+  if (ui.sel && ui.sel.kind === 'room') { var r = roomById(ui.sel.id); if (r) { var b = polyBox(r.poly); return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }; } }
+  if (ui.is3d && window.View3D && window.View3D.centerGround) { try { var g = window.View3D.centerGround(); if (g) return g; } catch (e) { } }
+  var v = viewSize(); return { x: view.x0 + v.W / view.s / 2, y: view.y0 + v.H / view.s / 2 };
+}
+function dupSel() {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var f = getF(ui.sel.id); if (!f) return;
+  snap();
+  var c = JSON.parse(JSON.stringify(f)); c.id = newId(); c.cx += 200; c.cy += 200;
+  state.furniture.push(c); ui.sel = { kind: 'furn', id: c.id }; commit();
+}
+function delSel() {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var id = ui.sel.id;
+  snap(); state.furniture = state.furniture.filter(function (f) { return f.id !== id; }); ui.sel = null; commit();
+}
+function rotSel(deg) {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var f = getF(ui.sel.id); if (!f) return;
+  mutate(function () { f.rot = norm(f.rot + deg); });
+}
+function clearAllFurn() {
+  var n = state.furniture.length;
+  if (!n) { toast(tr('Temizlenecek mobilya yok', 'There is no furniture to clear')); return; }
+  var msg = tr(n + ' mobilya / cihazın tamamı kaldırılsın mı?\nDuvarlar, zemin malzemeleri ve ölçüler korunur. «Geri Al» ile geri getirebilirsiniz.',
+    'Remove all ' + n + ' furniture / appliance items?\nWalls, flooring and measurements are kept. You can Undo this.');
+  if (!confirm(msg)) return;
+  mutate(function () { state.furniture = []; ui.sel = null; });
+  toast(tr('Yerleşim temizlendi — geri almak için «Geri Al»', 'Layout cleared — Undo to restore'));
+}
+function reorderSel(top) {
+  if (!ui.sel || ui.sel.kind !== 'furn') return;
+  var f = getF(ui.sel.id); if (!f) return;
+  mutate(function () { state.furniture = state.furniture.filter(function (x) { return x !== f; }); if (top) state.furniture.push(f); else state.furniture.unshift(f); });
+}
+
+/* ===================== sağ panel ===================== */
+function statBox(label, val, unit) { return '<div><small>' + esc(label) + '</small><div class="big">' + val + (unit ? '<i>' + unit + '</i>' : '') + '</div></div>'; }
+function matCostTable() {
+  var order = [], acc = {};
+  _ROOMS.forEach(function (r) {
+    var k = roomMatKey(r.id);
+    if (!acc[k]) { acc[k] = 0; order.push(k); }
+    acc[k] += polyArea(r.poly);
+  });
+  return order.map(function (k) { var m = matOf(k); return { k: k, m: m, area: acc[k], cost: acc[k] * (m.price || 0) * 1.05 }; });
+}
+function demolishedMeters() {
+  var t = 0;
+  state.demolished.forEach(function (key) { var w = _WALLS[+key.slice(1)]; if (w) t += Math.max(w[2] - w[0], w[3] - w[1]); });
+  return t / 1000;
+}
+function kbdRows(rows) { return '<div class="kbdg">' + rows.map(function (r) { return '<kbd>' + esc(r[0]) + '</kbd><span>' + esc(r[1]) + '</span>'; }).join('') + '</div>'; }
+function renderOverview() {
+  var s = '<section><h3>' + esc(tr('Oda Alanları', 'Room Areas')) + '<small>' + esc(tr('Zemini görmek / değiştirmek için tıkla', 'Click to view / change flooring')) + '</small></h3><table>';
+  _ROOMS.forEach(function (r) {
+    var m = matOf(roomMatKey(r.id));
+    s += '<tr data-room="' + esc(r.id) + '"><td><span class="sw" style="background:' + esc(m.sw) + '"></span>' + esc(nm(roomName(r.id))) + (r.counted === false ? ' <em>*</em>' : '') + '</td><td class="r">' + fmt(polyArea(r.poly), 2) + ' m²</td></tr>';
+  });
+  s += '</table><div class="total"><span>' + esc(tr('Net kullanım alanı', 'Net floor area')) + '</span><b>' + fmt(netArea(), 2) + ' m²</b></div>';
+  s += '<div class="note">' + esc(tr('* Cumbalar net alana dahil değildir; alanlar duvar iç net ölçülerinden hesaplanır', '* Bay windows are excluded; areas use net inner wall dimensions')) + '</div></section>';
+  var rows = matCostTable(), tot = 0;
+  s += '<section><h3>' + esc(tr('Zemin Malzemesi Tahmini', 'Flooring Estimate')) + '<small>' + esc(tr('%5 fire dahil', 'incl. 5% waste')) + '</small></h3><table>';
+  rows.forEach(function (r) {
+    tot += r.cost;
+    s += '<tr><td><span class="sw" style="background:' + esc(r.m.sw) + '"></span>' + esc(nm(r.m.name)) + '</td><td class="r">' + fmt(r.area, 1) + ' m²</td><td class="r">' + money(r.cost) + '</td></tr>';
+  });
+  s += '</table><div class="total"><span>' + esc(tr('Zemin malzemesi toplamı', 'Flooring total')) + '</span><b>' + money(tot) + '</b></div></section>';
+  s += '<section><h3>' + esc(tr('Plan İstatistikleri', 'Plan Stats')) + '</h3><div class="stats">'
+    + statBox(tr('Mobilya sayısı', 'Furniture'), state.furniture.length, '')
+    + statBox(tr('Yıkılan duvar', 'Walls removed'), fmt(demolishedMeters(), 1), ' m') + '</div>'
+    + '<div class="acts"><button class="btn" data-act="clearMeasures">' + esc(tr('Ölçüleri temizle', 'Clear measures')) + ' (' + state.measures.length + ')</button>'
+    + '<button class="btn danger" data-act="clearLayout">' + esc(tr('Yerleşimi temizle', 'Clear layout')) + '</button></div></section>';
+  if (IS_TOUCH) {
+    s += '<section><h3>' + esc(tr('Dokunmatik Kontroller', 'Touch Controls')) + '</h3>' + kbdRows([
+      [tr('Tek parmak sürükle', '1-finger drag'), tr('Boşlukta görüntüyü kaydırır', 'Pan on empty space')],
+      [tr('İki parmak', '2 fingers'), tr('Sıkıştırarak yakınlaştır, sürükleyerek kaydır', 'Pinch to zoom, drag to pan')],
+      [tr('Kitaplık', 'Library'), tr('Dokun: ortaya yerleştirir; basılı tutup sağa sürükle: istenen yere', 'Tap to place at center, or hold and drag right to a spot')],
+      [tr('Mobilyaya dokun', 'Tap item'), tr('Sürükleyerek taşı; üst nokta döndürür, sağ-alt kare boyutlandırır', 'Drag to move; top dot rotates, bottom-right square resizes')],
+      [tr('Araç çubuğu', 'Toolbar'), tr('Seçince alttaki çubuktan döndür / kopyala / sil', 'Bottom bar can rotate / duplicate / delete')],
+      [tr('Ölç', 'Measure'), tr('Basılı tutup çizgi sürükle veya iki noktaya dokun', 'Hold and drag a line, or tap two points')],
+      [tr('3D Gezinti', '3D walk'), tr('Joystick ile yürü, ekranı sürükleyerek bak, kapıya dokunarak aç/kapat', 'Joystick moves, drag to look, tap doors to open')]
+    ]) + '</section>';
+  }
+  s += '<section><h3>' + esc(tr('Klavye Kısayolları', 'Keyboard Shortcuts')) + '</h3>' + kbdRows([
+    [tr('Sürükle', 'Drag'), tr('Soldaki mobilyayı plana sürükle', 'Drag furniture onto the plan')],
+    ['V', tr('Seç / taşı', 'Select / move')],
+    ['M', tr('Ölç (Shift: yatay/dikey)', 'Measure (Shift: horizontal/vertical)')],
+    ['X', tr('Taşıyıcı olmayan duvarı yık (siyah = taşıyıcı)', 'Demolish non-bearing walls (black = bearing)')],
+    ['R', tr('90° döndür (Shift: ters yön)', 'Rotate 90° (Shift reverses)')],
+    [tr('Ok tuşları', 'Arrows'), tr('10 mm ince ayar (Shift: 100 mm)', 'Nudge 10mm (Shift 100mm)')],
+    ['⌘/Ctrl D', tr('Kopyala', 'Duplicate')],
+    ['Delete', tr('Sil', 'Delete')],
+    ['⌘/Ctrl Z', tr('Geri al', 'Undo')],
+    ['T', tr('2D / 3D geçiş', 'Toggle 2D / 3D')],
+    ['F', tr('Pencereye sığdır', 'Fit to window')],
+    ['Esc', tr('Seçimi kaldır', 'Deselect')]
+  ]) + '</section>';
+  return s;
+}
+function renderRoomPanel(r) {
+  var b = polyBox(r.poly), per = polyPerim(r.poly), mk = roomMatKey(r.id), cur = matOf(mk), a = polyArea(r.poly);
+  var s = '<section><h3>' + esc(tr('Oda', 'Room')) + '</h3><div class="form"><label class="full">' + esc(tr('Ad', 'Name')) + '<input id="rName" value="' + esc(nm(roomName(r.id))) + '"></label></div>';
+  s += '<div class="stats" style="margin-top:8px">'
+    + statBox(tr('Kullanım alanı', 'Floor area'), fmt(a, 2), ' m²') + statBox(tr('Çevre', 'Perimeter'), fmt(per, 1), ' m')
+    + statBox(tr('Genişlik (açıklık)', 'Width'), Math.round(b.x1 - b.x0), ' mm') + statBox(tr('Derinlik', 'Depth'), Math.round(b.y1 - b.y0), ' mm') + '</div>';
+  s += '<div class="note" style="font-size:12px">' + esc(tr('Duvar alanı (tavan 2,8 m, kapı/pencere düşülmeden) ≈ ', 'Wall area (2.8m ceiling, openings not deducted) ≈ ') + fmt(per * 2.8, 1) + ' m²') + '</div></section>';
+  s += '<section><h3>' + esc(tr('Zemin malzemesi', 'Flooring')) + '</h3><div class="mats">';
+  MATLIST.forEach(function (m) {
+    s += '<button data-mat="' + esc(m.k) + '"' + (m.k === mk ? ' class="on"' : '') + '><span class="sw" style="background:' + esc(m.sw) + '"></span><span><b>' + esc(nm(m.name)) + '</b><small>₺' + fmt(m.price, 0) + '/m²</small></span></button>';
+  });
+  s += '</div><div class="total"><span>' + esc(tr('Malzeme tahmini maliyet', 'Estimated cost')) + '</span><b>' + money(a * (cur.price || 0) * 1.05) + '</b></div></section>';
+  var inRoom = state.furniture.filter(function (f) { return f.cx > b.x0 && f.cx < b.x1 && f.cy > b.y0 && f.cy < b.y1; });
+  s += '<section><h3>' + esc(tr('Odadaki mobilyalar', 'Furniture in room')) + '<small>' + esc(tr(inRoom.length + ' adet', inRoom.length + ' items')) + '</small></h3>';
+  if (inRoom.length) {
+    s += '<table>' + inRoom.map(function (f) { return '<tr data-fid="' + esc(f.id) + '"><td>' + esc(nm(f.name)) + '</td><td class="m">' + Math.round(f.w) + '×' + Math.round(f.d) + '</td></tr>'; }).join('') + '</table>';
+  } else s += '<div class="muted12">' + esc(tr('Yok', 'None')) + '</div>';
+  s += '<div class="acts"><button class="btn" data-act="deselect">' + esc(tr('← Genel bakışa dön', '← Back to overview')) + '</button></div></section>';
+  return s;
+}
+function renderFurnPanel(f) {
+  var s = '<section><h3>' + esc(tr('Mobilya Özellikleri', 'Furniture')) + '</h3><div class="form">'
+    + '<label class="full">' + esc(tr('Ad', 'Name')) + '<input data-f="name" value="' + esc(nm(f.name)) + '"></label>'
+    + '<label>' + esc(tr('Genişlik (mm)', 'Width (mm)')) + '<input type="number" data-f="w" min="50" step="10" value="' + Math.round(f.w) + '"></label>'
+    + '<label>' + esc(tr('Derinlik (mm)', 'Depth (mm)')) + '<input type="number" data-f="d" min="50" step="10" value="' + Math.round(f.d) + '"></label>'
+    + '<label>' + esc(tr('Merkez X (mm)', 'Center X (mm)')) + '<input type="number" data-f="cx" step="10" value="' + Math.round(f.cx) + '"></label>'
+    + '<label>' + esc(tr('Merkez Y (mm)', 'Center Y (mm)')) + '<input type="number" data-f="cy" step="10" value="' + Math.round(f.cy) + '"></label>'
+    + '<label>' + esc(tr('Döndürme (°)', 'Rotation (°)')) + '<input type="number" data-f="rot" step="15" value="' + Math.round(f.rot) + '"></label>'
+    + '<label>' + esc(tr('Renk', 'Color')) + '<input type="color" data-f="color" value="' + esc(f.color) + '"></label></div>'
+    + '<div class="muted12" style="margin:10px 0 0">' + esc(tr('Taban alanı ', 'Footprint ') + fmt(f.w * f.d / 1e6, 2) + ' m²') + '</div>'
+    + '<div class="acts"><button class="btn" data-act="rot90">' + esc(tr('90° döndür', 'Rotate 90°')) + '</button><button class="btn" data-act="dup">' + esc(tr('Kopyala', 'Duplicate')) + '</button>'
+    + '<button class="btn" data-act="front">' + esc(tr('En üste getir', 'Bring to front')) + '</button><button class="btn" data-act="back">' + esc(tr('En alta gönder', 'Send to back')) + '</button>'
+    + '<button class="btn danger" data-act="del">' + esc(tr('Sil', 'Delete')) + '</button><button class="btn" data-act="deselect">' + esc(tr('← Geri', '← Back')) + '</button></div></section>';
+  s += '<section class="muted12">' + esc(tr('Taşımak için mobilyayı sürükleyin; üstteki noktayı sürükleyerek döndürün; sağ alt köşedeki kareyi sürükleyerek boyutlandırın. «Duvara yapış» açıkken duvara yaklaşınca otomatik hizalanır.',
+    'Drag to move; drag the top dot to rotate; drag the bottom-right square to resize. With "Wall snap" on, items snap flush to nearby walls.')) + '</section>';
+  return s;
+}
+function renderPanel() {
+  var p = $('#panel'), s;
+  if (ui.sel && ui.sel.kind === 'furn' && getF(ui.sel.id)) s = renderFurnPanel(getF(ui.sel.id));
+  else if (ui.sel && ui.sel.kind === 'room' && roomById(ui.sel.id)) s = renderRoomPanel(roomById(ui.sel.id));
+  else s = renderOverview();
+  var st = p.parentNode.scrollTop;
+  p.innerHTML = s;
+  p.parentNode.scrollTop = st;
+}
+function initPanelEvents() {
+  var p = $('#panel');
+  p.addEventListener('click', function (e) {
+    var t = e.target;
+    var row = t.closest('tr[data-room]');
+    if (row) { select('room', row.dataset.room); if (ui.is3d && window.View3D && window.View3D.flyToRoom) { try { window.View3D.flyToRoom(row.dataset.room); } catch (x) { } } return; }
+    var fr = t.closest('tr[data-fid]'); if (fr) { select('furn', fr.dataset.fid); return; }
+    var mb = t.closest('[data-mat]');
+    if (mb && ui.sel && ui.sel.kind === 'room') { var id = ui.sel.id; mutate(function () { state.rooms[id].mat = mb.dataset.mat; }); return; }
+    var ab = t.closest('[data-act]'); if (!ab) return;
+    switch (ab.dataset.act) {
+      case 'clearMeasures': mutate(function () { state.measures = []; }); break;
+      case 'clearLayout': clearAllFurn(); break;
+      case 'deselect': select(null); break;
+      case 'rot90': rotSel(90); break;
+      case 'dup': dupSel(); break;
+      case 'front': reorderSel(true); break;
+      case 'back': reorderSel(false); break;
+      case 'del': delSel(); break;
+    }
+  });
+  p.addEventListener('change', function (e) {
+    var t = e.target;
+    if (t.id === 'rName' && ui.sel && ui.sel.kind === 'room') {
+      var id = ui.sel.id, v = t.value.trim();
+      if (!v || v === nm(roomName(id))) { renderPanel(); return; }
+      mutate(function () { state.rooms[id].name = v; }); return;
+    }
+    var key = t.dataset && t.dataset.f;
+    if (!key || !ui.sel || ui.sel.kind !== 'furn') return;
+    var f = getF(ui.sel.id); if (!f) return;
+    if (key === 'name') { var nv = t.value.trim(); if (!nv || nv === nm(f.name)) { renderPanel(); return; } mutate(function () { f.name = nv; }); return; }
+    if (key === 'color') { mutate(function () { f.color = t.value; }); return; }
+    var v = parseFloat(t.value);
+    if (!isFinite(v)) { renderPanel(); return; }
+    mutate(function () {
+      if (key === 'w' || key === 'd') f[key] = Math.max(50, Math.round(v));
+      else if (key === 'rot') f.rot = norm(v);
+      else f[key] = Math.round(v);
+    });
+  });
+}
+
+/* ===================== yüzen çubuk ===================== */
+function renderFab() {
+  var fab = $('#fab'), sel = ui.sel, s = '';
+  if (sel && sel.kind === 'furn' && getF(sel.id)) {
+    var f = getF(sel.id);
+    s = '<span class="name">' + esc(nm(f.name)) + '</span><button class="btn" data-fab="rotL" title="' + esc(tr('Saat yönünün tersine 90°', '90° counter-clockwise')) + '">↺</button>'
+      + '<button class="btn" data-fab="rotR">↻ ' + esc(tr('Döndür', 'Rotate')) + '</button><button class="btn" data-fab="dup">' + esc(tr('Kopyala', 'Duplicate')) + '</button>'
+      + '<button class="btn danger" data-fab="del">' + esc(tr('Sil', 'Delete')) + '</button><span class="sep"></span>'
+      + '<button class="btn narrow-only" data-fab="props">' + esc(tr('Özellikler', 'Properties')) + '</button><button class="btn" data-fab="done">' + esc(tr('Bitti', 'Done')) + '</button>';
+  } else if (sel && sel.kind === 'room' && roomById(sel.id)) {
+    s = '<span class="name">' + esc(nm(roomName(sel.id))) + '</span><button class="btn narrow-only" data-fab="props">' + esc(tr('Zemin / Özellikler', 'Floor / Properties')) + '</button><button class="btn" data-fab="done">' + esc(tr('Bitti', 'Done')) + '</button>';
+  }
+  fab.innerHTML = s;
+  fab.classList.toggle('show', !!s);
+}
+function initFab() {
+  $('#fab').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-fab]'); if (!b) return;
+    switch (b.dataset.fab) {
+      case 'rotL': rotSel(-90); break;
+      case 'rotR': rotSel(90); break;
+      case 'dup': dupSel(); break;
+      case 'del': delSel(); break;
+      case 'done': select(null); break;
+      case 'props': openDrawer('right'); break;
+    }
+  });
+}
+
+/* ===================== kitaplık ===================== */
+function previewSvg(it, cls) {
+  var pad = Math.max(it.w, it.d) * 0.08;
+  return '<svg viewBox="' + n2(-it.w / 2 - pad) + ' ' + n2(-it.d / 2 - pad) + ' ' + n2(it.w + 2 * pad) + ' ' + n2(it.d + 2 * pad) + '" xmlns="' + NS + '"><g stroke="#3d3a34" stroke-width="1" stroke-linejoin="round">' + sym(it.type, it.w, it.d, it.color) + '</g></svg>';
+}
+function renderLib() {
+  var s = '';
+  LIBCATS.forEach(function (c, ci) {
+    s += '<h4>' + esc(nm(c.cat)) + '</h4><div class="grid">';
+    c.items.forEach(function (it, ii) {
+      s += '<div class="item" data-c="' + ci + '" data-i="' + ii + '" title="' + esc(tr('Eklemek için tıklayın veya plandaki yere sürükleyin', 'Click to add, or drag onto the plan')) + '">' + previewSvg(it) + '<b>' + esc(nm(it.name)) + '</b><small>' + it.w + '×' + it.d + '</small></div>';
+    });
+    s += '</div>';
+  });
+  $('#lib').innerHTML = s;
+  $('#libHint').textContent = IS_TOUCH
+    ? tr('Mobilyalar gerçek ölçüde (mm) çizilir. Dokunarak ortaya yerleştirin veya basılı tutup sağa, plana / 3D zemine sürükleyin (yukarı-aşağı kaydırma listeyi kaydırır). Eklendikten sonra sağ panelden genişlik, derinlik ve rengi değiştirebilirsiniz.',
+      'Furniture is drawn at real size (mm). Tap to place at the center, or hold and drag right onto the plan / 3D floor (swipe up/down to scroll). Edit size and color in the right panel afterwards.')
+    : tr('Mobilyalar gerçek ölçüde (mm) çizilir. Tıklayarak ekranın ortasına ekleyin veya plana / 3D zemine sürükleyin. Eklendikten sonra sağ panelden genişlik, derinlik ve rengi değiştirebilirsiniz.',
+      'Furniture is drawn at real size (mm). Click to add at the center, or drag onto the plan / 3D floor. Edit size and color in the right panel afterwards.');
+}
+var libDrag = null;
+function dropTargetOK(x, y) {
+  var el = document.elementFromPoint(x, y);
+  if (!el) return false;
+  if (!mainEl.contains(el)) return false;
+  if (el.closest('#fab, #walkOverlay, #joy, #walkExit')) return false;
+  return true;
+}
+function ghostScaleAt(x, y) {
+  if (ui.is3d && window.View3D && window.View3D.dropInfo) { try { var i = window.View3D.dropInfo(x, y); if (i && i.scale) return i.scale; } catch (e) { } }
+  return view.s;
+}
+function initLibDrag() {
+  var lib = $('#lib');
+  lib.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    var el = e.target.closest('.item'); if (!el) return;
+    var it = LIBCATS[+el.dataset.c].items[+el.dataset.i];
+    libDrag = { it: it, el: el, sx: e.clientX, sy: e.clientY, on: false, id: e.pointerId, touch: e.pointerType === 'touch' };
+    closeMenu();
+  });
+  function ghostUpdate(e) {
+    var g = $('#ghost'), s = ghostScaleAt(e.clientX, e.clientY), it = libDrag.it;
+    var w = Math.max(28, it.w * s), h = Math.max(20, it.d * s);
+    g.style.left = e.clientX + 'px'; g.style.top = e.clientY + 'px';
+    if (g._k !== it.name + '|' + Math.round(w) + '|' + Math.round(h)) {
+      g._k = it.name + '|' + Math.round(w) + '|' + Math.round(h);
+      g.innerHTML = previewSvg(it).replace('<svg ', '<svg width="' + w + '" height="' + h + '" ');
+    }
+  }
+  document.addEventListener('pointermove', function (e) {
+    if (!libDrag || e.pointerId !== libDrag.id) return;
+    var dx = e.clientX - libDrag.sx, dy = e.clientY - libDrag.sy;
+    if (!libDrag.on) {
+      if (libDrag.touch) { if (Math.abs(dx) > 9 && Math.abs(dx) > Math.abs(dy)) libDrag.on = true; else return; }
+      else { if (Math.hypot(dx, dy) > 4) libDrag.on = true; else return; }
+      libDrag.el.classList.add('dragging'); $('#ghost').style.display = 'block'; $('#ghost')._k = '';
+    }
+    ghostUpdate(e);
+    if (narrowNow()) { var d = $('#libAside'); if (d.classList.contains('open') && e.clientX > d.getBoundingClientRect().right) closeDrawers(); }
+    e.preventDefault();
+  });
+  function finish(e, cancel) {
+    if (!libDrag || e.pointerId !== libDrag.id) return;
+    var L = libDrag; libDrag = null;
+    L.el.classList.remove('dragging'); $('#ghost').style.display = 'none';
+    if (cancel) return;
+    if (!L.on) {
+      if (Math.hypot(e.clientX - L.sx, e.clientY - L.sy) > thr() + 2) return;
+      var p = defaultAddPoint(); addFurn(L.it, p.x, p.y);
+      if (narrowNow()) closeDrawers();
+      return;
+    }
+    if (!dropTargetOK(e.clientX, e.clientY)) return;
+    if (ui.is3d) {
+      var g = null;
+      try { g = window.View3D && window.View3D.dropPoint && window.View3D.dropPoint(e.clientX, e.clientY); } catch (x) { }
+      if (!g) { toast(tr('Zemine bırakın', 'Drop it on the floor')); return; }
+      addFurn(L.it, g.x, g.y);
+    } else {
+      var q = toMM(e.clientX, e.clientY); addFurn(L.it, q.x, q.y);
+    }
+  }
+  document.addEventListener('pointerup', function (e) { finish(e, false); });
+  document.addEventListener('pointercancel', function (e) { finish(e, true); });
+}
+
+/* ===================== yerleşim: paneller / çekmeceler ===================== */
+function narrowNow() { try { return matchMedia('(max-width:1100px)').matches; } catch (e) { return false; } }
+function savePanes() { lsSet(K_PANES, JSON.stringify({ hideLib: $('#app').classList.contains('hide-lib'), hidePanel: $('#app').classList.contains('hide-panel') })); }
+function updatePaneBtns() {
+  var app = $('#app'), narrow = narrowNow();
+  var libOn = narrow ? $('#libAside').classList.contains('open') : !app.classList.contains('hide-lib');
+  var panOn = narrow ? $('#rightAside').classList.contains('open') : !app.classList.contains('hide-panel');
+  var a = $('#tgLib'), b = $('#tgPanel');
+  a.classList.toggle('on', libOn); b.classList.toggle('on', panOn);
+  a.title = libOn ? tr('Mobilya kitaplığını gizle ( [ )', 'Hide library ( [ )') : tr('Mobilya kitaplığını göster ( [ )', 'Show library ( [ )');
+  b.title = panOn ? tr('Özellik panelini gizle ( ] )', 'Hide properties ( ] )') : tr('Özellik panelini göster ( ] )', 'Show properties ( ] )');
+  mainEl.classList.toggle('drawer-panel', narrow && $('#rightAside').classList.contains('open'));
+}
+function closeDrawers() {
+  var l = $('#libAside'), r = $('#rightAside');
+  if (l.classList.contains('open') || r.classList.contains('open')) { l.classList.remove('open'); r.classList.remove('open'); updatePaneBtns(); }
+}
+function openDrawer(side) {
+  var l = $('#libAside'), r = $('#rightAside');
+  l.classList.toggle('open', side === 'lib'); r.classList.toggle('open', side === 'right');
+  updatePaneBtns();
+}
+function togglePane(side) {
+  if (narrowNow()) {
+    var el = side === 'lib' ? $('#libAside') : $('#rightAside');
+    if (el.classList.contains('open')) closeDrawers(); else openDrawer(side);
+  } else {
+    $('#app').classList.toggle(side === 'lib' ? 'hide-lib' : 'hide-panel'); savePanes(); updatePaneBtns();
+  }
+}
+function loadPanes() {
+  try { var p = JSON.parse(lsGet(K_PANES) || 'null'); if (p) { $('#app').classList.toggle('hide-lib', !!p.hideLib); $('#app').classList.toggle('hide-panel', !!p.hidePanel); } } catch (e) { }
+}
+
+/* ===================== 2D / 3D geçişi ===================== */
+function walking() { try { return !!(window.View3D && window.View3D.walking && window.View3D.walking()); } catch (e) { return false; } }
+function updateTip() {
+  var t;
+  if (ui.is3d) t = tr('3D sahne plan ile anlık senkron · sağ paneldeki değişiklikler hemen uygulanır · T: 2D', '3D stays in sync with the plan · panel edits apply instantly · T for 2D');
+  else if (IS_TOUCH) t = tr('Kitaplıktan dokunun veya sürükleyin · tek parmak kaydırır · iki parmak yakınlaştırır · seçince alt çubuktan döndür / kopyala / sil', 'Tap or drag from the library · 1 finger pans · pinch zooms · bottom bar rotates / duplicates / deletes');
+  else t = tr('Soldaki mobilyayı plana sürükleyin · tekerlek yakınlaştırır · boşluğu sürükleyerek kaydırın · T: 3D', 'Drag furniture onto the plan · scroll to zoom · drag empty space to pan · T for 3D');
+  $('#tip').textContent = t;
+}
+function setViewUI(is3d) {
+  ui.is3d = !!is3d;
+  document.body.classList.toggle('m3d', ui.is3d);
+  $('#viewSeg').classList.toggle('is3d', ui.is3d);
+  $$('#viewSeg [data-view]').forEach(function (b) { b.classList.toggle('on', (b.dataset.view === '3d') === ui.is3d); });
+  updateTip();
+}
+function isThenable(x) { return x && typeof x.then === 'function'; }
+function setView(v) {
+  var to3d = v === '3d';
+  if (to3d === ui.is3d) return;
+  var V = window.View3D;
+  if (!V || !(to3d ? V.enter : V.exit)) { toast(tr('3D motoru hâlâ yükleniyor veya yüklenemedi (three.js için ağ bağlantısı gerekir)', '3D engine is still loading or failed to load (three.js needs a network connection)')); return; }
+  document.body.classList.add('busy');
+  if (to3d) { cancelAct(); setTool('select'); closeDrawers(); }
+  setViewUI(to3d);
+  var done = function () { document.body.classList.remove('busy'); if (!to3d) { renderAll(); } };
+  var res;
+  try { res = to3d ? V.enter() : V.exit(); } catch (e) { console.error(e); setViewUI(!to3d); done(); return; }
+  if (isThenable(res)) res.then(done, function (e) { console.error(e); done(); });
+  else setTimeout(done, to3d ? 2300 : 1900);
+}
+function toggleView() { setView(ui.is3d ? '2d' : '3d'); }
+
+/* ===================== tam ekran ===================== */
+function fsLabel() {
+  var on = !!document.fullscreenElement;
+  var b = $('#fullscreen');
+  b.textContent = on ? '⛶ ' + tr('Tam ekrandan çık', 'Exit fullscreen') : '⛶ ' + tr('Tam ekran', 'Fullscreen');
+}
+function toggleFullscreen() {
+  var el = document.documentElement;
+  if (!el.requestFullscreen) { toast(tr('Bu tarayıcı tam ekranı desteklemiyor — Safari’de «Ana Ekrana Ekle» ile tam ekran açın', 'Fullscreen is not supported here — in Safari, use "Add to Home Screen" to open it fullscreen')); return; }
+  var p = document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen();
+  if (p && p.catch) p.catch(function () { toast(tr('Tam ekrana geçilemedi', 'Could not enter fullscreen')); });
+}
+
+/* ===================== dışa / içe aktarma ===================== */
+function download(blobOrUrl, name) {
+  var a = document.createElement('a'), url = typeof blobOrUrl === 'string' ? blobOrUrl : URL.createObjectURL(blobOrUrl);
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  if (typeof blobOrUrl !== 'string') setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+function exportImage() {
+  if (ui.is3d) {
+    var cv = $('#view3d canvas');
+    try { if (window.View3D && window.View3D.exportPNG) { window.View3D.exportPNG(); return; } } catch (e) { }
+    if (cv) { try { download(cv.toDataURL('image/png'), 'kat-plani-tasarimi-3D.png'); } catch (e) { } }
+    return;
+  }
+  var b = _BOUNDS, W = 3200, Hh = Math.round(W * b.h / b.w);
+  var c = svg.cloneNode(true);
+  c.setAttribute('xmlns', NS); c.setAttribute('viewBox', b.x + ' ' + b.y + ' ' + b.w + ' ' + b.h);
+  c.setAttribute('width', W); c.setAttribute('height', Hh); c.removeAttribute('class'); c.removeAttribute('style');
+  var q = c.querySelector('#gSel'); if (q) q.innerHTML = '';
+  var q2 = c.querySelector('#gGrid rect'); if (q2) q2.setAttribute('fill', ui.layers.grid ? 'url(#grid)' : '#f7f4ee');
+  var st = document.createElementNS(NS, 'style');
+  st.textContent = '*{vector-effect:non-scaling-stroke} pattern *,text{vector-effect:none} text{font-family:-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif} .wall{pointer-events:none}';
+  c.insertBefore(st, c.firstChild);
+  var bg = document.createElementNS(NS, 'rect');
+  bg.setAttribute('x', b.x); bg.setAttribute('y', b.y); bg.setAttribute('width', b.w); bg.setAttribute('height', b.h); bg.setAttribute('fill', '#f7f4ee');
+  var defs = c.querySelector('defs'); c.insertBefore(bg, defs ? defs.nextSibling : c.firstChild);
+  var xml = new XMLSerializer().serializeToString(c);
+  var img = new Image();
+  img.onload = function () {
+    var cv2 = document.createElement('canvas'); cv2.width = W; cv2.height = Hh;
+    var cx = cv2.getContext('2d'); cx.fillStyle = '#f7f4ee'; cx.fillRect(0, 0, W, Hh); cx.drawImage(img, 0, 0, W, Hh);
+    cv2.toBlob(function (bl) { if (bl) download(bl, 'kat-plani-tasarimi.png'); }, 'image/png');
+  };
+  img.onerror = function () { toast(tr('Görüntü dışa aktarılamadı', 'Could not export image')); };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
+}
+function exportJson() {
+  download(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), 'kat-plani-tasarimi.json');
+}
+function importFile(file) {
+  file.text().then(function (txt) {
+    var o; try { o = JSON.parse(txt); } catch (e) { o = null; }
+    if (!o || !Array.isArray(o.furniture)) { toast(tr('Dosya biçimi geçersiz', 'Invalid file format')); return; }
+    snap(); state = fixState(o); ui.sel = null; commit();
+    toast(tr('Plan içe aktarıldı', 'Plan imported'));
+  }, function () { toast(tr('Dosya biçimi geçersiz', 'Invalid file format')); });
+}
+function resetDefault() {
+  if (!confirm(tr('Varsayılan tasarıma dönülsün mü? (geri alınabilir)', 'Reset to the default design? (undoable)'))) return;
+  snap(); state = defaultState(); ui.sel = null; commit();
+}
+
+/* ===================== klavye ===================== */
+function nudge(dx, dy) {
+  if (!ui.sel || ui.sel.kind !== 'furn') return false;
+  var f = getF(ui.sel.id); if (!f) return false;
+  mutate(function () { f.cx += dx; f.cy += dy; });
+  return true;
+}
+function initKeys() {
+  document.addEventListener('keydown', function (e) {
+    var tg = e.target, tn = tg && tg.tagName;
+    if (tn === 'INPUT' || tn === 'SELECT' || tn === 'TEXTAREA') { if (!(tn === 'INPUT' && (tg.type === 'range' || tg.type === 'checkbox') && false)) return; }
+    if (walking()) return;
+    var k = e.key, lk = k.length === 1 ? k.toLowerCase() : k, ctrl = e.ctrlKey || e.metaKey;
+    if (ctrl) {
+      if (lk === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+      else if (lk === 'y') { e.preventDefault(); redo(); }
+      else if (lk === 'd') { e.preventDefault(); dupSel(); }
+      return;
+    }
+    if (e.altKey) return;
+    var in3 = ui.is3d;
+    switch (lk) {
+      case 'v': if (!in3) setTool('select'); break;
+      case 'm': if (!in3) setTool('measure'); break;
+      case 'x': if (!in3) setTool('demolish'); break;
+      case 'Escape':
+        if (ui.tool === 'measure' && ui.mpend) { ui.mpend = null; ui.mcur = null; act = null; renderMeasure(); }
+        else { if (ui.tool !== 'select') setTool('select'); select(null); }
+        break;
+      case 'r': rotSel(e.shiftKey ? -90 : 90); break;
+      case 'Delete': case 'Backspace': if (ui.sel && ui.sel.kind === 'furn') { e.preventDefault(); delSel(); } break;
+      case 'ArrowLeft': if (nudge(e.shiftKey ? -100 : -10, 0)) e.preventDefault(); break;
+      case 'ArrowRight': if (nudge(e.shiftKey ? 100 : 10, 0)) e.preventDefault(); break;
+      case 'ArrowUp': if (nudge(0, e.shiftKey ? -100 : -10)) e.preventDefault(); break;
+      case 'ArrowDown': if (nudge(0, e.shiftKey ? 100 : 10)) e.preventDefault(); break;
+      case 't': toggleView(); break;
+      case 'f': if (e.shiftKey) toggleFullscreen(); else if (!in3) fitView(); break;
+      case '+': case '=': if (!in3) zoomCenter(1.25); break;
+      case '-': case '_': if (!in3) zoomCenter(0.8); break;
+      case '[': togglePane('lib'); break;
+      case ']': togglePane('right'); break;
+    }
+  });
+}
+
+/* ===================== dil uygulama ===================== */
+function walkTexts() {
+  var a = $('#wo1'), b = $('#wo2'), c = $('#wo3');
+  if (IS_TOUCH) {
+    a.innerHTML = esc(tr('Başlamak için dokunun (giriş kapısından girilir)', 'Tap to start at the front door'));
+    b.innerHTML = esc(tr('Sol alttaki joystick ile yürü · ekranı sürükleyerek bak', 'Joystick moves · drag on screen to look'));
+    c.innerHTML = esc(tr('Kapıya dokunarak aç/kapat · «Gezintiden çık» ile kuşbakışına dön', 'Tap doors to open · "Exit walk" returns to orbit'));
+  } else {
+    a.innerHTML = esc(tr('Başlamak için tıklayın (giriş kapısından girilir)', 'Click to start at the front door'));
+    b.innerHTML = tr('<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> yürü · fare: bak · <kbd>Shift</kbd> hızlı', '<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move · mouse looks · <kbd>Shift</kbd> runs');
+    c.innerHTML = tr('<kbd>E</kbd> önündeki kapıyı aç/kapat · <kbd>Esc</kbd> duraklat', '<kbd>E</kbd> opens the door ahead · <kbd>Esc</kbd> pauses');
+  }
+}
+function applyLang() {
+  document.documentElement.lang = LANG;
+  document.title = tr('Kat Planı Dekorasyon Tasarımı', 'Floor Plan Designer');
+  $$('[data-en]').forEach(function (el) {
+    if (el.dataset.tr == null) el.dataset.tr = el.innerHTML;
+    el.innerHTML = LANG === 'en' ? el.dataset.en : el.dataset.tr;
+  });
+  $$('[data-en-title]').forEach(function (el) {
+    if (el.dataset.trTitle == null) el.dataset.trTitle = el.getAttribute('title') || '';
+    el.setAttribute('title', LANG === 'en' ? el.dataset.enTitle : el.dataset.trTitle);
+  });
+  $('#langBtn').textContent = LANG === 'en' ? 'TR' : 'EN';
+  walkTexts(); fsLabel(); updateTip(); updatePaneBtns();
+  renderLib(); setTool(ui.tool); renderAll();
+  window.dispatchEvent(new CustomEvent('kp-lang', { detail: LANG }));
+  try { var V = window.View3D; if (V) { (V.onLang || V.relang || V.refreshLang || function () { }).call(V, LANG); } } catch (e) { console.error(e); }
+}
+function setLang(l) { LANG = l; lsSet(K_LANG, l); applyLang(); }
+
+/* ===================== başlatma ===================== */
+function initUI() {
+  $$('#tools [data-tool]').forEach(function (b) { b.addEventListener('click', function () { setTool(b.dataset.tool); }); });
+  $('#zIn').addEventListener('click', function () { zoomCenter(1.25); });
+  $('#zOut').addEventListener('click', function () { zoomCenter(0.8); });
+  $('#zFit').addEventListener('click', fitView);
+  $('#z60').addEventListener('click', function () { setRatio(60); toast(tr('1:60 gösteriliyor (özgün plan ile aynı ölçek)', 'Showing at 1:60 (same scale as the original plan)')); });
+  $('#z100').addEventListener('click', function () { setRatio(100); });
+  $('#undo').addEventListener('click', undo);
+  $('#redo').addEventListener('click', redo);
+  $('#clearAll').addEventListener('click', clearAllFurn);
+  $$('[data-layer]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var k = b.dataset.layer; ui.layers[k] = !ui.layers[k]; renderLayers();
+      if (k === 'grid') renderGrid(); else if (k === 'dims') renderDims(); else if (k === 'rooms') renderLabels(); else if (k === 'furn') renderFurn(); else if (k === 'bearing') renderWalls();
+    });
+  });
+  $$('#viewSeg [data-view]').forEach(function (b) { b.addEventListener('click', function () { setView(b.dataset.view); }); });
+  $('#tgLib').addEventListener('click', function () { togglePane('lib'); });
+  $('#tgPanel').addEventListener('click', function () { togglePane('right'); });
+  $('#langBtn').addEventListener('click', function () { setLang(LANG === 'en' ? 'tr' : 'en'); });
+  $('#fullscreen').addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', fsLabel);
+  try { if (matchMedia('(display-mode: standalone)').matches || navigator.standalone) $('#fullscreen').style.display = 'none'; } catch (e) { }
+  $('#mExportImg').addEventListener('click', function () { closeMenu(); exportImage(); });
+  $('#mExportJson').addEventListener('click', function () { closeMenu(); exportJson(); });
+  $('#mImport').addEventListener('click', function () { closeMenu(); $('#importFile').click(); });
+  $('#mReset').addEventListener('click', function () { closeMenu(); resetDefault(); });
+  $('#importFile').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; if (f) importFile(f); e.target.value = ''; });
+  $('#sun').addEventListener('input', function (e) {
+    var h = parseFloat(e.target.value), hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+    $('#sunVal').textContent = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  });
+  mainEl.addEventListener('pointerdown', function () { closeDrawers(); closeMenu(); }, true);
+  try { matchMedia('(max-width:1100px)').addEventListener('change', function () { closeDrawers(); updatePaneBtns(); }); } catch (e) { }
+}
+function initResize() {
+  var lw = 0, lh = 0;
+  var ro = new ResizeObserver(function () {
+    var v = viewSize();
+    if (v.W < 2 || v.H < 2) return;
+    if (!lw) fitView();
+    else { view.x0 += lw / 2 / view.s - v.W / 2 / view.s; view.y0 += lh / 2 / view.s - v.H / 2 / view.s; applyView(); }
+    lw = v.W; lh = v.H;
+  });
+  ro.observe(mainEl);
+}
+function boot() {
+  state = loadState();
+  loadPanes();
+  initSvg(); initPointer(); initPanelEvents(); initFab(); initLibDrag(); initUI(); initKeys();
+  setTool('select'); renderLayers();
+  applyLang();
+  initResize();
+  updatePaneBtns();
+  window.state = state;
+}
+window.setViewUI = setViewUI;
+window.is3d = function () { return ui.is3d; };
+window.snapshot = window.pushUndo = window.beginChange = snap;
+window.walking2D = walking;
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+
 </script>
 <script type="module">
 /* 3D mobilya modelleri — SPEC §7. window.Models3D = { buildFurniture, TYPES, disposeGroup, ... }
@@ -1490,7 +2258,7 @@ const screenMat = glow => mat('#0b0e13', { roughness: 0.1, metalness: 0.3, emiss
 const glowMat = () => mat('#fff4dc', { emissive: '#ffdca0', emissiveIntensity: 0.5, side: DS, roughness: 0.6 });
 const glassM = () => mat('#cfe6ef', { roughness: 0.05, transparent: true, opacity: 0.28, depthWrite: false, side: DS });
 const frameMat = () => mat('#5d6166', { roughness: 0.5, metalness: 0.4 });
-const steel = () => mat('#c9ced3', { metalness: 0.85, roughness: 0.3 });
+const steel = () => mat('#d3d8dc', { metalness: 0.85, roughness: 0.3 });
 const led = (c, i = 1) => mat(c, { emissive: c, emissiveIntensity: i, roughness: 0.4 });
 
 /* ---------- tohumlu rastgelelik ---------- */
@@ -2538,7 +3306,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const isEn = () => /^en/i.test(document.documentElement.lang || '');
+const isEn = () => (typeof LANG !== 'undefined' ? LANG === 'en' : /^en/i.test(document.documentElement.lang || ''));
 const L = (t, e) => (typeof window.tr === 'function' ? window.tr(t, e) : (isEn() ? e : t));
 const coarse = () => { try { return matchMedia('(pointer:coarse)').matches; } catch (e) { return false; } };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -3307,7 +4075,6 @@ async function exit() {
   if (flyAnim) { flyAnim.cancel = true; flyAnim = null; flying = false; }
   mainEl.classList.add('animating');
   setClasses(false);
-  setTip(false);
   const from = curPose();
   const pp = planPose();
   await new Promise(res => runAnim(1300, t => {
@@ -3326,13 +4093,9 @@ async function exit() {
   updateHint();
 }
 function setTip(in3d) {
-  const t = $('#tip'); if (!t) return;
-  if (in3d) t.textContent = coarse()
-    ? L('Tek parmak döndürür · iki parmak yakınlaştırır / kaydırır · düzenlemek için mobilyaya veya zemine dokunun · kapıya dokunarak aç/kapat', '1 finger orbits · 2 fingers zoom / pan · tap furniture or floor to edit · tap doors to open')
-    : L('3D sahne plan ile anlık senkron · sağ paneldeki değişiklikler hemen uygulanır · T: 2D', '3D stays in sync with the plan · panel edits apply instantly · T for 2D');
-  else t.textContent = coarse()
-    ? L('Kitaplıktan dokunun veya sürükleyin · tek parmak kaydırır · iki parmak yakınlaştırır · seçince alt çubuktan döndür / kopyala / sil', 'Tap or drag from the library · 1 finger pans · pinch zooms · bottom bar rotates / duplicates / deletes')
-    : L('Soldaki mobilyayı plana sürükleyin · tekerlek yakınlaştırır · boşluğu sürükleyerek kaydırın · T: 3D', 'Drag furniture onto the plan · scroll to zoom · drag empty space to pan · T for 3D');
+  // masaüstü metinlerini 2D tarafı (updateTip) yazar; yalnız dokunmatik 3D ipucu burada
+  const t = $('#tip');
+  if (t && in3d && coarse()) t.textContent = L('Tek parmak döndürür · iki parmak yakınlaştırır / kaydırır · düzenlemek için mobilyaya veya zemine dokunun · kapıya dokunarak aç/kapat', '1 finger orbits · 2 fingers zoom / pan · tap furniture or floor to edit · tap doors to open');
 }
 function updateHint() {
   const h = $('#hint3d'); if (!h) return;
@@ -3344,20 +4107,6 @@ function updateHint() {
     ? L('Tek parmak döndürür · iki parmak yakınlaştırır / kaydırır · seçili mobilyayı sürükleyip yerleştirin · kapıya dokunarak aç/kapat', '1 finger orbits · 2 fingers zoom / pan · select furniture to drag it · tap doors to open')
     : L('Sol tuş: döndür · sağ tuş: kaydır · tekerlek: yakınlaştır · seçili mobilyayı sürükleyip yerleştir · kapıya tıklayarak aç/kapat', 'Left-drag orbits · right-drag pans · scroll zooms · select furniture to drag it · click doors to open');
   h.textContent = s;
-  // gezinti kaplaması metinleri
-  const o1 = $('#wo1'), o2 = $('#wo2'), o3 = $('#wo3'), ttl = $('#walkOverlay h3');
-  if (o1 && o2 && o3) {
-    const tc = coarse();
-    if (ttl) ttl.textContent = L('Gezinti modu', 'Walk mode');
-    o1.textContent = tc ? L('Başlamak için dokunun (giriş kapısından girilir)', 'Tap to start at the front door') : L('Başlamak için tıklayın (giriş kapısından girilir)', 'Click to start at the front door');
-    if (tc) {
-      o2.textContent = L('Sol alttaki joystick ile yürü · ekranı sürükleyerek bak', 'Joystick moves · drag on screen to look');
-      o3.textContent = L('Kapıya dokunarak aç/kapat · «Gezintiden çık» ile kuşbakışına dön', 'Tap doors to open · "Exit walk" returns to orbit');
-    } else {
-      o2.innerHTML = L('<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> yürü · fare: bak · <kbd>Shift</kbd> hızlı', '<kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> move · mouse looks · <kbd>Shift</kbd> runs');
-      o3.innerHTML = L('<kbd>E</kbd> önündeki kapıyı aç/kapat · <kbd>Esc</kbd> duraklat', '<kbd>E</kbd> opens the door ahead · <kbd>Esc</kbd> pauses');
-    }
-  }
 }
 
 /* ------------------------------------------------------------------ seçenekler (kesit, gece, saat ...) */
@@ -3803,8 +4552,7 @@ function bindHeader() {
     if (b.dataset.t === 'night') opt.night = on; else if (b.dataset.t === 'furn') opt.furn = on; else if (b.dataset.t === 'labels') opt.labels = on;
   });
   bindWalkUI();
-  new MutationObserver(() => { if (!inited) return; sigLabel = sigList = ''; if (active) { sync(); } updateHint(); if (active) setTip(true); })
-    .observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+  
 }
 
 /* ------------------------------------------------------------------ dışa aktarma */
@@ -3827,10 +4575,16 @@ const API = {
   enter, exit,
   toggle() { return active && !busyAnim ? exit() : enter(); },
   sync, resize,
-  refresh() { sigLabel = sigList = ''; if (inited && active) sync(); updateHint(); },
+  refresh() { sigLabel = sigList = ''; if (inited && active) { sync(); setTip(true); } updateHint(); },
+  onLang() { API.refresh(); },
   setMode, setCut, setNight, setFurn, setLabels, setHour,
   flyToRoom, flyToAll, flyIso() { return flyTo(isoWhole()); }, flyTop() { return flyTo(topWhole()); },
   groundPointAt, screenCenterGround, pxPerMm,
+  // 2D tarafının (app.js) kullandığı adlar
+  centerGround: screenCenterGround,
+  dropPoint: groundPointAt,
+  dropInfo(x, y) { const s = pxPerMm(x, y); return s ? { scale: s } : null; },
+  onSelect() { /* seçim vurgusu her karede ui.sel'den okunur */ },
   toDataURL, exportPNG,
   walking: () => active && mode === 'walk',
   isWalking: () => active && mode === 'walk',
@@ -3845,6 +4599,8 @@ const API = {
   get scene() { return scene; },
   get camera() { return camera; },
   init,
+  // sınama yardımcısı: kamerayı 2D ile aynı üstten pozuna koyar
+  _toPlanPose() { controls.enabled = false; setPose(planPose()); },
 };
 window.View3D = API;
 
